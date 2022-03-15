@@ -2,6 +2,120 @@
 
 pragma solidity ^0.7.4;
 
+contract Owners {
+    event OwnerAdded(
+        address indexed adder,
+        address indexed owner,
+        uint256 indexed timestamp
+    );
+
+    event OwnerRemoved(
+        address indexed remover,
+        address indexed owner,
+        uint256 indexed timestamp
+    );
+
+    event OwnershipRenounced(uint256 timestamp);
+
+    bool public renounced;
+
+    address private masterOwner;
+    mapping(address => bool) private ownerMap;
+    address[] private ownerList;
+
+    constructor() {
+        masterOwner = msg.sender;
+        ownerMap[msg.sender] = true;
+        ownerList.push(msg.sender);
+    }
+
+    modifier onlyMasterOwner() {
+        require(!renounced, "Ownership renounced");
+        require(msg.sender == masterOwner);
+        _;
+    }
+
+    modifier onlyOwners() {
+        require(!renounced, "Ownership renounced");
+        require(ownerMap[msg.sender], "Caller is not an owner");
+        _;
+    }
+
+    /// @notice Return whether given address is one of the owners of this contract
+    /// @param address_ Address to check
+    /// @return True/False
+    function isOwner(address address_) public view returns (bool) {
+        return ownerMap[address_];
+    }
+
+    /// @notice Get all addresses of current owners
+    /// @return List of owners
+    function getOwners() external view returns (address[] memory) {
+        return ownerList;
+    }
+
+    /// @notice Add a new owner, only the master owner can add
+    /// @param address_ Address to add
+    function addOwner(address address_) public onlyMasterOwner {
+        ownerMap[address_] = true;
+        ownerList.push(address_);
+        emit OwnerAdded(msg.sender, address_, block.timestamp);
+    }
+
+    /// @notice Remove existing owner, only master owner can remove
+    /// @param address_ Address to remove
+    function removeOwner(address address_) public onlyMasterOwner {
+        require(ownerMap[address_], "Address is not an owner");
+        require(address_ != masterOwner, "Master owner can't be removed");
+        uint256 lengthBefore = ownerList.length;
+        for (uint256 i = 0; i < ownerList.length; i++) {
+            if (ownerList[i] == address_) {
+                ownerMap[address_] = false;
+                for (uint256 j = i; j < ownerList.length - 1; j++) {
+                    ownerList[i] = ownerList[i + 1];
+                }
+                ownerList.pop();
+                break;
+            }
+        }
+        uint256 lengthAfter = ownerList.length;
+        require( // Sanity check
+            lengthAfter < lengthBefore,
+            "Something went wrong removing owners"
+        );
+        emit OwnerRemoved(msg.sender, address_, block.timestamp);
+    }
+
+    /// @notice Let master owner renounce contract
+    /// @param check Requires "give" as a parameter to prevent accidental renouncing
+    function renounceOwnership(string memory check) external onlyMasterOwner {
+        string memory checkAgainst = "confirm";
+        require(
+            keccak256(bytes(check)) == keccak256(bytes(checkAgainst)),
+            "Can't renounce without 'confirm' as a parameter"
+        );
+        renounced = true;
+        emit OwnershipRenounced(block.timestamp);
+    }
+}
+
+contract PauseOwners is Owners {
+    bool public isPaused;
+
+    modifier checkPaused(address address_) {
+        if (!isOwner(address_)) {
+            require(!isPaused, "Contract paused");
+        }
+        _;
+    }
+
+    /// @notice Pause any functions which use checkPaused modifier
+    /// @param isPaused_ True to pause false to unpause
+    function setIsPaused(bool isPaused_) public virtual onlyOwners {
+        isPaused = isPaused_;
+    }
+}
+
 library SafeMathInt {
     int256 private constant MIN_INT256 = int256(1) << 255;
     int256 private constant MAX_INT256 = ~(int256(1) << 255);
@@ -490,7 +604,6 @@ contract DividendDistributor is IDividendDistributor {
     }
 
     IERC20 BUSD = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
-    //address WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     IPancakeSwapRouter router;
 
     address[] shareholders;
@@ -507,7 +620,7 @@ contract DividendDistributor is IDividendDistributor {
 
     uint256 public dividendsPerShareAccuracyFactor = 10**36;
     uint256 public minPeriod = 1 hours;
-    uint256 public minDistribution = 1 * (10**18);
+    uint256 public minDistribution = 10 * (10**18);
 
     bool initialized;
     modifier initialization() {
@@ -683,49 +796,6 @@ contract DividendDistributor is IDividendDistributor {
     }
 }
 
-contract Ownable {
-    address private _owner;
-
-    event OwnershipRenounced(address indexed previousOwner);
-
-    event OwnershipTransferred(
-        address indexed previousOwner,
-        address indexed newOwner
-    );
-
-    constructor() {
-        _owner = msg.sender;
-    }
-
-    function owner() public view returns (address) {
-        return _owner;
-    }
-
-    modifier onlyOwner() {
-        require(isOwner());
-        _;
-    }
-
-    function isOwner() public view returns (bool) {
-        return msg.sender == _owner;
-    }
-
-    function renounceOwnership() public onlyOwner {
-        emit OwnershipRenounced(_owner);
-        _owner = address(0);
-    }
-
-    function transferOwnership(address newOwner) public onlyOwner {
-        _transferOwnership(newOwner);
-    }
-
-    function _transferOwnership(address newOwner) internal {
-        require(newOwner != address(0));
-        emit OwnershipTransferred(_owner, newOwner);
-        _owner = newOwner;
-    }
-}
-
 abstract contract ERC20Detailed is IERC20 {
     string private _name;
     string private _symbol;
@@ -754,7 +824,7 @@ abstract contract ERC20Detailed is IERC20 {
     }
 }
 
-contract SECO is ERC20Detailed, Ownable {
+contract SECO is ERC20Detailed, PauseOwners {
     using SafeMath for uint256;
     using SafeMathInt for int256;
 
@@ -770,14 +840,11 @@ contract SECO is ERC20Detailed, Ownable {
 
     uint256 public constant DECIMALS = 18;
     uint256 public constant MAX_UINT256 = ~uint256(0);
-    uint8 public constant RATE_DECIMALS = 18;
 
-    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 1000000 * 10**DECIMALS; // Initial supply million
-
-    uint256 public liquidityFee = 20;
-    uint256 public treasuryFee = 25;
-    uint256 public dividendFee = 70;
+    uint256 public liquidityFee = 25;
     uint256 public autofirePitFee = 25;
+    uint256 public treasuryFee = 50;
+    uint256 public dividendFee = 50;
     uint256 public sellFee = 20;
     uint256 public totalFee =
         liquidityFee.add(treasuryFee).add(dividendFee).add(autofirePitFee);
@@ -797,8 +864,11 @@ contract SECO is ERC20Detailed, Ownable {
     bool public swapEnabled = true;
     IPancakeSwapRouter public router;
 
-    uint256 private rebaseInterval = 1 hours;
-    uint256 private liquidityAddInterval = 1 days;
+    uint256 public rebaseInterval = 1 hours;
+    uint256 public liquidityAddInterval = 1 days;
+    uint256 public rebaseRate = 41666; // 4.166% of inital supply, 100% daily
+
+    uint256 public epoch = 0;
 
     address public pair;
     bool inSwap = false;
@@ -807,11 +877,12 @@ contract SECO is ERC20Detailed, Ownable {
         _;
         inSwap = false;
     }
+    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 1000000 * 10**DECIMALS; // Initial supply million
 
     uint256 private constant TOTAL_GONS =
         MAX_UINT256 - (MAX_UINT256 % INITIAL_FRAGMENTS_SUPPLY);
 
-    uint256 private constant MAX_SUPPLY = 10000000000 * 10**DECIMALS; // Max supply 100 billion
+    uint256 private constant MAX_SUPPLY = 10000000000 * 10**DECIMALS; // Max supply 10 billion
 
     bool public _autoRebase;
     bool public _autoAddLiquidity;
@@ -826,11 +897,8 @@ contract SECO is ERC20Detailed, Ownable {
     mapping(address => bool) public blacklist;
     mapping(address => bool) public isDividendExempt;
 
-    constructor() ERC20Detailed("SECO", "SECO", uint8(DECIMALS)) Ownable() {
-        // Forked mainnet
-        address routerAddress = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-        // BSC mainnet
-        // address routerAddress = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
+    constructor() ERC20Detailed("SECO", "SECO", uint8(DECIMALS)) {
+        address routerAddress = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
 
         router = IPancakeSwapRouter(routerAddress);
         pair = IPancakeSwapFactory(router.factory()).createPair(
@@ -838,12 +906,8 @@ contract SECO is ERC20Detailed, Ownable {
             address(this)
         );
 
-        // treasuryReceiver = 0xdD5c34f3280f8360a5d367730cF4Bc2d1c60bbb6;
-        // autoLiquidityReceiver = 0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
-        // autofirePit = 0x000000000000000000000000000000000000dEaD;
-
-        treasuryReceiver = msg.sender;
-        autoLiquidityReceiver = msg.sender;
+        treasuryReceiver = 0xdD5c34f3280f8360a5d367730cF4Bc2d1c60bbb6;
+        autoLiquidityReceiver = 0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
         autofirePit = 0x000000000000000000000000000000000000dEaD;
 
         _allowedFragments[address(this)][address(router)] = uint256(-1);
@@ -866,41 +930,29 @@ contract SECO is ERC20Detailed, Ownable {
         _autoAddLiquidity = true;
         _isFeeExempt[treasuryReceiver] = true;
         _isFeeExempt[address(this)] = true;
+    }
 
-        _transferOwnership(treasuryReceiver);
-        emit Transfer(address(0x0), treasuryReceiver, _totalSupply);
+    function setIsPaused(bool isPaused_) public override onlyOwners {
+        _autoRebase = true;
+        isPaused = isPaused_;
     }
 
     function rebase() internal {
         if (inSwap) return;
-        uint256 rebaseRate;
-        uint256 deltaTimeFromInit = block.timestamp - _initRebaseStartTime;
-        // uint256 deltaTime = block.timestamp - _lastRebasedTime;
-
-        if (deltaTimeFromInit < (365 days)) {
-            // 1 year
-            rebaseRate = 1000000; // Million
-        } else if (deltaTimeFromInit >= 365 days) {
-            // over 1 year
-            rebaseRate = 500000; // 500 thousand
-        } else if (deltaTimeFromInit >= 547.5 days) {
-            // over 1.5 years
-            rebaseRate = 50000; // 50 thousand
-        } else if (deltaTimeFromInit >= 1825 days) {
-            // Over 5 years
-            rebaseRate = 5000; // 5 thousand
-        }
 
         _totalSupply = _totalSupply.mul((10**DECIMALS).add(rebaseRate)).div(
             10**DECIMALS
         );
+        if (_totalSupply > MAX_SUPPLY) {
+            _totalSupply = MAX_SUPPLY;
+        }
 
         _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
-        _lastRebasedTime = _lastRebasedTime.add(rebaseInterval);
 
         pairContract.sync();
 
-        uint256 epoch = deltaTimeFromInit.div(rebaseInterval);
+        _lastRebasedTime = block.timestamp;
+        epoch = epoch.add(1);
         emit LogRebase(epoch, _totalSupply);
     }
 
@@ -943,7 +995,7 @@ contract SECO is ERC20Detailed, Ownable {
         address sender,
         address recipient,
         uint256 amount
-    ) internal returns (bool) {
+    ) internal checkPaused(tx.origin) returns (bool) {
         require(!blacklist[sender] && !blacklist[recipient], "in_blacklist");
 
         if (inSwap) {
@@ -999,6 +1051,7 @@ contract SECO is ERC20Detailed, Ownable {
         uint256 _treasuryFee = treasuryFee;
 
         if (recipient == pair) {
+            // Is selling
             _totalFee = totalFee.add(sellFee);
             _treasuryFee = treasuryFee.add(sellFee);
         }
@@ -1100,13 +1153,13 @@ contract SECO is ERC20Detailed, Ownable {
         {} catch {}
     }
 
-    function withdrawAllToTreasury() external swapping onlyOwner {
+    function withdrawAllToTreasury() external swapping onlyOwners {
         uint256 amountToSwap = _gonBalances[address(this)].div(
             _gonsPerFragment
         );
         require(
             amountToSwap > 0,
-            "There is no EverSAFU token deposited in token contract"
+            "There are no tokens deposited in the contract"
         );
         address[] memory path = new address[](2);
         path[0] = address(this);
@@ -1149,7 +1202,7 @@ contract SECO is ERC20Detailed, Ownable {
         return !inSwap && msg.sender != pair;
     }
 
-    function setAutoRebase(bool _flag) external onlyOwner {
+    function setAutoRebase(bool _flag) external onlyOwners {
         if (_flag) {
             _autoRebase = _flag;
             _lastRebasedTime = block.timestamp;
@@ -1158,7 +1211,7 @@ contract SECO is ERC20Detailed, Ownable {
         }
     }
 
-    function setAutoAddLiquidity(bool _flag) external onlyOwner {
+    function setAutoAddLiquidity(bool _flag) external onlyOwners {
         if (_flag) {
             _autoAddLiquidity = _flag;
             _lastAddLiquidityTime = block.timestamp;
@@ -1167,14 +1220,18 @@ contract SECO is ERC20Detailed, Ownable {
         }
     }
 
-    function setAutoRebaseInterval(uint256 ms) external onlyOwner {
+    function setAutoRebaseInterval(uint256 ms) external onlyOwners {
         rebaseInterval = ms;
         _lastRebasedTime = block.timestamp;
     }
 
-    function setAutoAddLiquidityInterval(uint256 ms) external onlyOwner {
+    function setAutoAddLiquidityInterval(uint256 ms) external onlyOwners {
         liquidityAddInterval = ms;
         _lastAddLiquidityTime = block.timestamp;
+    }
+
+    function setAutoRebaseRate(uint256 rate) external onlyOwners {
+        rebaseRate = rate;
     }
 
     function allowance(address owner_, address spender)
@@ -1237,7 +1294,7 @@ contract SECO is ERC20Detailed, Ownable {
 
     function setIsDividendExempt(address holder, bool exempt)
         external
-        onlyOwner
+        onlyOwners
     {
         require(holder != address(this) && holder != pair);
         isDividendExempt[holder] = exempt;
@@ -1252,11 +1309,11 @@ contract SECO is ERC20Detailed, Ownable {
     function setDistributionCriteria(
         uint256 _minPeriod,
         uint256 _minDistribution
-    ) external onlyOwner {
+    ) external onlyOwners {
         distributor.setDistributionCriteria(_minPeriod, _minDistribution);
     }
 
-    function setDistributorSettings(uint256 gas) external onlyOwner {
+    function setDistributorSettings(uint256 gas) external onlyOwners {
         require(gas < 750000, "Gas must be lower than 750000");
         distributorGas = gas;
     }
@@ -1280,10 +1337,26 @@ contract SECO is ERC20Detailed, Ownable {
         address _autoLiquidityReceiver,
         address _treasuryReceiver,
         address _autofirePit
-    ) external onlyOwner {
+    ) external onlyOwners {
         autoLiquidityReceiver = _autoLiquidityReceiver;
         treasuryReceiver = _treasuryReceiver;
         autofirePit = _autofirePit;
+    }
+
+    function setFees(
+        uint256 _liquidityFee,
+        uint256 autoburnFee,
+        uint256 _dividendFee,
+        uint256 _sellFee
+    ) external onlyOwners {
+        liquidityFee = _liquidityFee;
+        autofirePitFee = autoburnFee;
+        dividendFee = _dividendFee;
+        sellFee = _sellFee;
+        totalFee = liquidityFee.add(treasuryFee).add(dividendFee).add(
+            autofirePitFee
+        );
+        require(totalFee <= 200); // Hardcode max 20% fees
     }
 
     function getLiquidityBacking(uint256 accuracy)
@@ -1296,13 +1369,13 @@ contract SECO is ERC20Detailed, Ownable {
             accuracy.mul(liquidityBalance.mul(2)).div(getCirculatingSupply());
     }
 
-    function setWhitelist(address _addr) external onlyOwner {
+    function setWhitelist(address _addr) external onlyOwners {
         _isFeeExempt[_addr] = true;
     }
 
     function setBotBlacklist(address _botAddress, bool _flag)
         external
-        onlyOwner
+        onlyOwners
     {
         require(
             isContract(_botAddress),
@@ -1311,7 +1384,7 @@ contract SECO is ERC20Detailed, Ownable {
         blacklist[_botAddress] = _flag;
     }
 
-    function setLP(address _address) external onlyOwner {
+    function setLP(address _address) external onlyOwners {
         pairContract = IPancakeSwapPair(_address);
     }
 

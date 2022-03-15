@@ -73,7 +73,17 @@ module.exports = {
 			timeoutBlocks: 200,
 			networkCheckTimeout: 1000000,
 		},
-		mainnet: {},
+		mainnet: {
+			provider: () =>
+				new HDWalletProvider(
+					process.env.MNEMONIC,
+					`https://bsc-dataseed1.binance.org`
+				),
+			network_id: 56,
+			confirmations: 10,
+			timeoutBlocks: 200,
+			skipDryRun: true,
+		},
 		// Another network with more advanced options...
 		// advanced: {
 		// port: 8777,             // Custom port
