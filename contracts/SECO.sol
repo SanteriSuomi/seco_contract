@@ -841,6 +841,7 @@ contract SECO is ERC20Detailed, PauseOwners {
     using SafeMathInt for int256;
 
     event LogRebase(uint256 indexed epoch, uint256 totalSupply);
+    event LogLiquidity(uint256 indexed amountETH, uint256 indexed amountToken);
 
     IPancakeSwapPair public pairContract;
     mapping(address => bool) _isFeeExempt;
@@ -857,7 +858,7 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 public autofirePitFee = 25;
     uint256 public treasuryFee = 50;
     uint256 public dividendFee = 50;
-    uint256 public sellFee = 20;
+    uint256 public treasuryExtraSellFee = 20;
     uint256 public totalFee =
         liquidityFee.add(treasuryFee).add(dividendFee).add(autofirePitFee);
     uint256 public feeDenominator = 1000;
@@ -877,10 +878,12 @@ contract SECO is ERC20Detailed, PauseOwners {
     IPancakeSwapRouter public router;
 
     uint256 public rebaseInterval = 30 minutes;
-    uint256 public liquidityAddInterval = 1 days;
-    uint256 public rebaseRate = 10416; // 5% daily APR ((10000000 * 0.05) / 48)
-    uint256 public rebaseStartTime = 1 hours;
-    uint256 public rebaseStart;
+    uint256 public liquidityAddInterval = 2 hours;
+    uint256 public rebaseRate = 208333;
+    // Daily APR = ((initial supply * percentage) / daily rebases)
+    uint256 public lastRebaseRateReduce;
+    uint256 public rebaseRateReduceDivisor = 2;
+    uint256 public rebaseRateReduceInterval = 30 days;
 
     uint256 public epoch = 0;
 
@@ -896,11 +899,10 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 private constant TOTAL_GONS =
         MAX_UINT256 - (MAX_UINT256 % INITIAL_FRAGMENTS_SUPPLY);
 
-    uint256 private constant MAX_SUPPLY = 10000000000 * 10**DECIMALS; // Max supply 10 billion
+    uint256 private constant MAX_SUPPLY = 1000000000 * 10**DECIMALS; // Max supply 1 billion
 
     bool public _autoRebase;
     bool public _autoAddLiquidity;
-    uint256 public _initRebaseStartTime;
     uint256 public _lastRebasedTime;
     uint256 public _lastAddLiquidityTime;
     uint256 public _totalSupply;
@@ -930,37 +932,36 @@ contract SECO is ERC20Detailed, PauseOwners {
         distributor = new DividendDistributor(routerAddress);
         dividendReceiver = address(distributor);
 
-        isDividendExempt[msg.sender] = true;
-        isDividendExempt[pair] = true;
-        isDividendExempt[address(this)] = true;
-        isDividendExempt[DEAD] = true;
-
         _totalSupply = INITIAL_FRAGMENTS_SUPPLY;
         _gonBalances[treasuryReceiver] = TOTAL_GONS;
         _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
         _autoRebase = false;
         _autoAddLiquidity = true;
+
+        isDividendExempt[pair] = true;
+        isDividendExempt[DEAD] = true;
+        isDividendExempt[address(this)] = true;
+
         _isFeeExempt[treasuryReceiver] = true;
         _isFeeExempt[address(this)] = true;
-    }
-
-    function setIsPaused(bool isPaused_) public override onlyOwners {
-        isPaused = isPaused_;
-        rebaseStart = block.timestamp + rebaseStartTime;
-        _initRebaseStartTime = rebaseStart;
-        _lastRebasedTime = rebaseStart;
     }
 
     function rebase() internal {
         if (inSwap) return;
 
+        if (lastRebaseRateReduce <= block.timestamp) {
+            lastRebaseRateReduce = lastRebaseRateReduce.add(
+                rebaseRateReduceInterval
+            );
+            rebaseRate = rebaseRate.div(rebaseRateReduceDivisor);
+        }
         _totalSupply = _totalSupply.mul((10**DECIMALS).add(rebaseRate)).div(
             10**DECIMALS
         );
         if (_totalSupply > MAX_SUPPLY) {
             _totalSupply = MAX_SUPPLY;
+            _autoRebase = false;
         }
-
         _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
 
         pairContract.sync();
@@ -1020,9 +1021,6 @@ contract SECO is ERC20Detailed, PauseOwners {
             return _basicTransfer(sender, recipient, amount);
         }
 
-        if (block.timestamp >= rebaseStart) {
-            _autoRebase = true;
-        }
         if (shouldRebase()) {
             rebase();
         }
@@ -1072,8 +1070,8 @@ contract SECO is ERC20Detailed, PauseOwners {
         uint256 _treasuryFee = treasuryFee;
 
         if (recipient == pair) {
-            _totalFee = totalFee.add(sellFee);
-            _treasuryFee = treasuryFee.add(sellFee);
+            _totalFee = totalFee.add(treasuryExtraSellFee);
+            _treasuryFee = treasuryFee.add(treasuryExtraSellFee);
         }
 
         uint256 feeAmount = gonAmount.div(feeDenominator).mul(_totalFee);
@@ -1133,6 +1131,7 @@ contract SECO is ERC20Detailed, PauseOwners {
             );
         }
         _lastAddLiquidityTime = block.timestamp;
+        emit LogLiquidity(amountETHLiquidity, amountToLiquify);
     }
 
     function swapBack() internal swapping {
@@ -1248,6 +1247,10 @@ contract SECO is ERC20Detailed, PauseOwners {
     function setAutoAddLiquidityInterval(uint256 ms) external onlyOwners {
         liquidityAddInterval = ms;
         _lastAddLiquidityTime = block.timestamp;
+    }
+
+    function setRebaseRateReduceInterval(uint256 ms) external onlyOwners {
+        rebaseRateReduceInterval = ms;
     }
 
     function setAutoRebaseRate(uint256 rate) external onlyOwners {
@@ -1367,15 +1370,17 @@ contract SECO is ERC20Detailed, PauseOwners {
         uint256 _liquidityFee,
         uint256 autoburnFee,
         uint256 _dividendFee,
-        uint256 _sellFee
+        uint256 _treasuryExtraSellFee
     ) external onlyOwners {
         liquidityFee = _liquidityFee;
         autofirePitFee = autoburnFee;
         dividendFee = _dividendFee;
-        sellFee = _sellFee;
-        totalFee = liquidityFee.add(treasuryFee).add(dividendFee).add(
-            autofirePitFee
-        );
+        treasuryExtraSellFee = _treasuryExtraSellFee;
+        totalFee = liquidityFee
+            .add(treasuryFee)
+            .add(dividendFee)
+            .add(autofirePitFee)
+            .add(treasuryExtraSellFee);
         require(totalFee <= 200); // Hardcode max 20% fees
     }
 

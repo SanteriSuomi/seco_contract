@@ -20,15 +20,6 @@ contract PauseOwners is Owners {
         require(isExempt, "Paused");
     }
 
-    // modifier checkPausedMod(address[] memory addresses) {
-    //     pauseGuard(addresses);
-    //     _;
-    // }
-
-    // function checkPausedFunc(address[] memory addresses) internal view {
-    //     pauseGuard(addresses);
-    // }
-
     /// @notice Pause any functions which use checkPaused modifier
     /// @param isPaused_ True to pause false to unpause
     function setIsPaused(bool isPaused_) public onlyOwners {
