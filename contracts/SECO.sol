@@ -102,17 +102,29 @@ contract Owners {
 contract PauseOwners is Owners {
     bool public isPaused;
 
-    modifier checkPaused(address address_) {
-        if (!isOwner(address_)) {
-            require(!isPaused, "Contract paused");
+    mapping(address => bool) public pauseExempt;
+
+    function pauseGuard(address[3] memory addresses) internal view virtual {
+        if (isPaused) {
+            bool isExempt = false;
+            for (uint256 i = 0; i < addresses.length; i++) {
+                if (isOwner(addresses[i]) || pauseExempt[addresses[i]]) {
+                    isExempt = true;
+                    break;
+                }
+            }
+            require(isExempt, "Paused");
         }
-        _;
     }
 
     /// @notice Pause any functions which use checkPaused modifier
     /// @param isPaused_ True to pause false to unpause
     function setIsPaused(bool isPaused_) public virtual onlyOwners {
         isPaused = isPaused_;
+    }
+
+    function modifyPauseExempt(address address_, bool value) public onlyOwners {
+        pauseExempt[address_] = value;
     }
 }
 
@@ -864,9 +876,11 @@ contract SECO is ERC20Detailed, PauseOwners {
     bool public swapEnabled = true;
     IPancakeSwapRouter public router;
 
-    uint256 public rebaseInterval = 1 hours;
+    uint256 public rebaseInterval = 30 minutes;
     uint256 public liquidityAddInterval = 1 days;
-    uint256 public rebaseRate = 41666; // 4.166% of inital supply, 100% daily
+    uint256 public rebaseRate = 10416; // 5% daily APR ((10000000 * 0.05) / 48)
+    uint256 public rebaseStartTime = 1 hours;
+    uint256 public rebaseStart;
 
     uint256 public epoch = 0;
 
@@ -877,7 +891,7 @@ contract SECO is ERC20Detailed, PauseOwners {
         _;
         inSwap = false;
     }
-    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 1000000 * 10**DECIMALS; // Initial supply million
+    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 10000000 * 10**DECIMALS; // Initial supply 10 million
 
     uint256 private constant TOTAL_GONS =
         MAX_UINT256 - (MAX_UINT256 % INITIAL_FRAGMENTS_SUPPLY);
@@ -924,8 +938,6 @@ contract SECO is ERC20Detailed, PauseOwners {
         _totalSupply = INITIAL_FRAGMENTS_SUPPLY;
         _gonBalances[treasuryReceiver] = TOTAL_GONS;
         _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
-        _initRebaseStartTime = block.timestamp;
-        _lastRebasedTime = block.timestamp;
         _autoRebase = false;
         _autoAddLiquidity = true;
         _isFeeExempt[treasuryReceiver] = true;
@@ -933,8 +945,10 @@ contract SECO is ERC20Detailed, PauseOwners {
     }
 
     function setIsPaused(bool isPaused_) public override onlyOwners {
-        _autoRebase = true;
         isPaused = isPaused_;
+        rebaseStart = block.timestamp + rebaseStartTime;
+        _initRebaseStartTime = rebaseStart;
+        _lastRebasedTime = rebaseStart;
     }
 
     function rebase() internal {
@@ -995,13 +1009,20 @@ contract SECO is ERC20Detailed, PauseOwners {
         address sender,
         address recipient,
         uint256 amount
-    ) internal checkPaused(tx.origin) returns (bool) {
+    ) internal returns (bool) {
+        if (isPaused) {
+            address[3] memory addresses = [sender, msg.sender, tx.origin];
+            pauseGuard(addresses);
+        }
         require(!blacklist[sender] && !blacklist[recipient], "in_blacklist");
 
         if (inSwap) {
             return _basicTransfer(sender, recipient, amount);
         }
 
+        if (block.timestamp >= rebaseStart) {
+            _autoRebase = true;
+        }
         if (shouldRebase()) {
             rebase();
         }
@@ -1051,7 +1072,6 @@ contract SECO is ERC20Detailed, PauseOwners {
         uint256 _treasuryFee = treasuryFee;
 
         if (recipient == pair) {
-            // Is selling
             _totalFee = totalFee.add(sellFee);
             _treasuryFee = treasuryFee.add(sellFee);
         }

@@ -7,16 +7,35 @@ import "./Owners.sol";
 contract PauseOwners is Owners {
     bool public isPaused;
 
-    modifier checkPaused(address address_) {
-        if (!isOwner(address_)) {
-            require(!isPaused, "Contract paused");
+    mapping(address => bool) public pauseExempt;
+
+    function pauseGuard(address[3] memory addresses) internal view virtual {
+        bool isExempt = false;
+        for (uint256 i = 0; i < addresses.length; i++) {
+            if (isOwner(addresses[i]) || pauseExempt[addresses[i]]) {
+                isExempt = true;
+                break;
+            }
         }
-        _;
+        require(isExempt, "Paused");
     }
+
+    // modifier checkPausedMod(address[] memory addresses) {
+    //     pauseGuard(addresses);
+    //     _;
+    // }
+
+    // function checkPausedFunc(address[] memory addresses) internal view {
+    //     pauseGuard(addresses);
+    // }
 
     /// @notice Pause any functions which use checkPaused modifier
     /// @param isPaused_ True to pause false to unpause
     function setIsPaused(bool isPaused_) public onlyOwners {
         isPaused = isPaused_;
+    }
+
+    function modifyPauseExempt(address address_, bool value) public onlyOwners {
+        pauseExempt[address_] = value;
     }
 }
