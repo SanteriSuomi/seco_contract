@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Unlicensed
 
-pragma solidity ^0.7.4;
+pragma solidity >=0.7.4;
 
 contract Owners {
     event OwnerAdded(
@@ -919,7 +919,7 @@ contract SECO is ERC20Detailed, PauseOwners {
             address(this)
         );
 
-        treasuryReceiver = msg.sender;
+        treasuryReceiver = 0xdD5c34f3280f8360a5d367730cF4Bc2d1c60bbb6;
         autoLiquidityReceiver = 0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
 
         _allowedFragments[address(this)][address(router)] = uint256(-1);
@@ -937,9 +937,11 @@ contract SECO is ERC20Detailed, PauseOwners {
 
         isDividendExempt[pair] = true;
         isDividendExempt[DEAD] = true;
+        isDividendExempt[ZERO] = true;
         isDividendExempt[address(this)] = true;
 
         _isFeeExempt[treasuryReceiver] = true;
+        _isFeeExempt[autoLiquidityReceiver] = true;
         _isFeeExempt[address(this)] = true;
     }
 
