@@ -753,7 +753,7 @@ contract DividendDistributor is IDividendDistributor {
         }
     }
 
-    function claimDividend() external {
+    function claimDividend() public {
         distributeDividend(msg.sender);
     }
 
@@ -838,7 +838,7 @@ contract SECO is ERC20Detailed, PauseOwners {
     event LogRebase(uint256 indexed epoch, uint256 totalSupply);
 
     IPancakeSwapPair public pairContract;
-    mapping(address => bool) _isFeeExempt;
+    mapping(address => bool) public _isFeeExempt;
 
     modifier validRecipient(address to) {
         require(to != address(0x0));
@@ -860,7 +860,7 @@ contract SECO is ERC20Detailed, PauseOwners {
     address public autoLiquidityReceiver;
     address public treasuryReceiver;
 
-    DividendDistributor distributor;
+    DividendDistributor private distributor;
     address public dividendReceiver;
     uint256 distributorGas = 500000;
 
@@ -870,7 +870,6 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 public rebaseInterval = 30 minutes;
     uint256 public liquidityAddInterval = 5 minutes;
     uint256 public rebaseRate = 5208; // Every rebase is 0.05% of initial supply
-    // Daily APR = ((initial supply * percentage) / daily rebases)
     uint256 public epoch = 0;
 
     bool public antibotActivated;
@@ -878,6 +877,8 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 private antibotTimeEnd;
     uint256 private maxTx = 100000 * 10**DECIMALS;
     uint256 private maxWallet = 200000 * 10**DECIMALS;
+
+    bool private tradingActivated = false;
 
     address public pair;
     bool inSwap = false;
@@ -946,8 +947,10 @@ contract SECO is ERC20Detailed, PauseOwners {
     }
 
     function activateTrade() external onlyOwners {
+        require(!tradingActivated, "Trading is already activated");
         antibotBlockEnd = block.number + 2;
         antibotTimeEnd = block.timestamp + 300;
+        tradingActivated = true;
         antibotActivated = true;
         isPaused = false;
     }
@@ -1192,7 +1195,7 @@ contract SECO is ERC20Detailed, PauseOwners {
         {} catch {}
     }
 
-    function withdrawAllToTreasury() external swapping onlyOwners {
+    function manualWithdrawToTreasury() external swapping onlyOwners {
         uint256 amountToSwap = _gonBalances[address(this)].div(
             _gonsPerFragment
         );
@@ -1217,7 +1220,11 @@ contract SECO is ERC20Detailed, PauseOwners {
         view
         returns (bool)
     {
-        return (pair == from || pair == to) && !_isFeeExempt[from];
+        return
+            (pair == from || pair == to) &&
+            !_isFeeExempt[from] &&
+            !_isFeeExempt[msg.sender] &&
+            !_isFeeExempt[tx.origin];
     }
 
     function shouldRebase() internal view returns (bool) {
@@ -1238,6 +1245,18 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     function shouldSwapBack() internal view returns (bool) {
         return !inSwap && msg.sender != pair;
+    }
+
+    function totalDividendsDistributed() external view returns (uint256) {
+        return distributor.totalDistributed();
+    }
+
+    function claimDividends() external {
+        distributor.claimDividend();
+    }
+
+    function showUnpaidEarnings() external view returns (uint256) {
+        return distributor.getUnpaidEarnings(msg.sender);
     }
 
     function setAutoRebase(bool _flag) public onlyOwners {
