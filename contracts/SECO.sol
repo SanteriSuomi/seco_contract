@@ -869,8 +869,8 @@ contract SECO is ERC20Detailed, PauseOwners {
     bool public swapEnabled = true;
     IPancakeSwapRouter public router;
 
-    uint256 public rebaseInterval = 10 minutes;
-    uint256 public rebaseRate = 3909;
+    uint256 public rebaseInterval = 1 hours;
+    uint256 public rebaseRate = 21862;
 
     bool public rebaseRateHalvingEnabled = true;
     uint256 public rebaseRateHalvingInterval = 365 days;
