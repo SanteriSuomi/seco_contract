@@ -780,6 +780,23 @@ contract DividendDistributor is IDividendDistributor {
         return shareholderTotalDividends.sub(shareholderTotalExcluded);
     }
 
+    function getShareholder(address _addr)
+        external
+        view
+        returns (
+            uint256,
+            uint256,
+            uint256
+        )
+    {
+        Share memory _shareholder = shares[_addr];
+        return (
+            _shareholder.amount,
+            _shareholder.totalExcluded,
+            _shareholder.totalRealised
+        );
+    }
+
     function getCumulativeDividends(uint256 share)
         internal
         view
@@ -850,10 +867,15 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 public constant DECIMALS = 18;
     uint256 public constant MAX_UINT256 = ~uint256(0);
 
-    uint256 public liquidityFee = 30;
+    uint256 public burnFee = 20;
+    uint256 public liquidityFee = 20;
+    uint256 public buybackFee = 20;
     uint256 public treasuryFee = 50;
-    uint256 public dividendFee = 70;
-    uint256 public totalFee = liquidityFee.add(treasuryFee).add(dividendFee);
+    uint256 public dividendFee = 50;
+    uint256 public totalFee =
+        burnFee.add(liquidityFee).add(buybackFee).add(treasuryFee).add(
+            dividendFee
+        );
     uint256 public feeDenominator = 1000;
 
     address DEAD = 0x000000000000000000000000000000000000dEaD;
@@ -861,6 +883,7 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     address public autoLiquidityReceiver;
     address public treasuryReceiver;
+    address public buybackReceiver;
 
     DividendDistributor private distributor;
     address public dividendReceiver;
@@ -870,7 +893,7 @@ contract SECO is ERC20Detailed, PauseOwners {
     IPancakeSwapRouter public router;
 
     uint256 public rebaseInterval = 1 hours;
-    uint256 public rebaseRate = 21862;
+    uint256 public rebaseRate = 15607;
 
     bool public rebaseRateHalvingEnabled = true;
     uint256 public rebaseRateHalvingInterval = 365 days;
@@ -930,8 +953,9 @@ contract SECO is ERC20Detailed, PauseOwners {
             address(this)
         );
 
-        treasuryReceiver = 0xdD5c34f3280f8360a5d367730cF4Bc2d1c60bbb6;
-        autoLiquidityReceiver = 0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
+        treasuryReceiver = 0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
+        buybackReceiver = 0x96213A6D519e84aB2a7eFaD1ad3727010F9Fdcbf;
+        autoLiquidityReceiver = 0x4D5c4e6C38f0C0F914858a9e9a0d0969F2e4C2eA;
 
         _allowedFragments[address(this)][address(router)] = uint256(-1);
         pairContract = IPancakeSwapPair(pair);
@@ -953,6 +977,7 @@ contract SECO is ERC20Detailed, PauseOwners {
 
         _isFeeExempt[treasuryReceiver] = true;
         _isFeeExempt[autoLiquidityReceiver] = true;
+        _isFeeExempt[buybackReceiver] = true;
         _isFeeExempt[address(this)] = true;
     }
 
@@ -1127,12 +1152,19 @@ contract SECO is ERC20Detailed, PauseOwners {
     {
         uint256 feeAmount = gonAmount.div(feeDenominator).mul(totalFee);
 
-        _gonBalances[address(this)] = _gonBalances[address(this)].add(
-            gonAmount.div(feeDenominator).mul(treasuryFee.add(dividendFee))
+        _gonBalances[address(this)] = _gonBalances[address(this)].add( // Treasury, buyback and dividends
+            gonAmount.div(feeDenominator).mul(
+                treasuryFee.add(dividendFee).add(buybackFee)
+            )
         );
+
         _gonBalances[autoLiquidityReceiver] = _gonBalances[
             autoLiquidityReceiver
         ].add(gonAmount.div(feeDenominator).mul(liquidityFee));
+
+        _gonBalances[DEAD] = _gonBalances[DEAD].add(
+            gonAmount.div(feeDenominator).mul(burnFee)
+        );
 
         emit Transfer(sender, address(this), feeAmount.div(_gonsPerFragment));
         return gonAmount.sub(feeAmount);
@@ -1204,9 +1236,14 @@ contract SECO is ERC20Detailed, PauseOwners {
         );
 
         uint256 amountETH = address(this).balance.sub(balanceBefore);
+        uint256 amountFee = treasuryFee.add(dividendFee).add(buybackFee);
 
-        (bool success, ) = payable(treasuryReceiver).call{
-            value: amountETH.mul(treasuryFee).div(treasuryFee.add(dividendFee)),
+        (bool treasurySuccess, ) = payable(treasuryReceiver).call{
+            value: amountETH.mul(treasuryFee).div(amountFee),
+            gas: 30000
+        }("");
+        (bool buybackSuccess, ) = payable(buybackReceiver).call{
+            value: amountETH.mul(buybackFee).div(amountFee),
             gas: 30000
         }("");
 
@@ -1219,24 +1256,39 @@ contract SECO is ERC20Detailed, PauseOwners {
         {} catch {}
     }
 
-    function manualWithdrawToTreasury() external swapping onlyOwners {
+    function manualWithdrawToTreasuryBuyback() external swapping onlyOwners {
         uint256 amountToSwap = _gonBalances[address(this)].div(
             _gonsPerFragment
         );
-        require(
-            amountToSwap > 0,
-            "There are no tokens deposited in the contract"
-        );
+
+        if (amountToSwap == 0) {
+            return;
+        }
+
+        uint256 balanceBefore = address(this).balance;
         address[] memory path = new address[](2);
         path[0] = address(this);
         path[1] = router.WETH();
+
         router.swapExactTokensForETHSupportingFeeOnTransferTokens(
             amountToSwap,
             0,
             path,
-            treasuryReceiver,
+            address(this),
             block.timestamp
         );
+
+        uint256 amountETH = address(this).balance.sub(balanceBefore);
+        uint256 amountFee = treasuryFee.add(buybackFee);
+
+        (bool treasurySuccess, ) = payable(treasuryReceiver).call{
+            value: amountETH.mul(treasuryFee).div(amountFee),
+            gas: 30000
+        }("");
+        (bool buybackSuccess, ) = payable(buybackReceiver).call{
+            value: amountETH.mul(buybackFee).div(amountFee),
+            gas: 30000
+        }("");
     }
 
     function shouldTakeFee(address from, address to)
@@ -1281,6 +1333,18 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     function showUnpaidEarnings() external view returns (uint256) {
         return distributor.getUnpaidEarnings(msg.sender);
+    }
+
+    function getShareholder(address _addr)
+        external
+        view
+        returns (
+            uint256,
+            uint256,
+            uint256
+        )
+    {
+        return distributor.getShareholder(_addr);
     }
 
     function setAutoRebase(bool _flag) public onlyOwners {
@@ -1423,22 +1487,26 @@ contract SECO is ERC20Detailed, PauseOwners {
     }
 
     function setFeeReceivers(
+        address _buybackReceiver,
         address _autoLiquidityReceiver,
         address _treasuryReceiver
     ) external onlyOwners {
+        _buybackReceiver = _buybackReceiver;
         autoLiquidityReceiver = _autoLiquidityReceiver;
         treasuryReceiver = _treasuryReceiver;
     }
 
     function setFees(
+        uint256 _burnFee,
         uint256 _liquidityFee,
         uint256 _dividendFee,
         uint256 _treasuryFee
     ) external onlyOwners {
+        burnFee = _burnFee;
         liquidityFee = _liquidityFee;
         dividendFee = _dividendFee;
         treasuryFee = _treasuryFee;
-        totalFee = liquidityFee.add(dividendFee).add(treasuryFee);
+        totalFee = burnFee.add(liquidityFee).add(dividendFee).add(treasuryFee);
         require(totalFee <= 200); // Hardcode max 20% fees
     }
 
@@ -1456,7 +1524,7 @@ contract SECO is ERC20Detailed, PauseOwners {
         _isFeeExempt[_addr] = _val;
     }
 
-    function setBlacklist(address _address, bool _flag) external onlyOwners {
+    function setBotBlacklist(address _address, bool _flag) external onlyOwners {
         if (isContract(_address)) {
             // Is a contract
             botBlacklist[_address] = _flag;
