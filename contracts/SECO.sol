@@ -608,9 +608,9 @@ contract DividendDistributor is IDividendDistributor {
     }
 
     // Testnet
-    IERC20 BUSD = IERC20(0x8301F2213c0eeD49a7E28Ae4c3e91722919B8B47);
+    IERC20 rewardToken = IERC20(0x8301F2213c0eeD49a7E28Ae4c3e91722919B8B47);
     // Mainnet
-    // IERC20 BUSD = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
+    // IERC20 rewardToken = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
     IPancakeSwapRouter router;
 
     address[] shareholders;
@@ -679,17 +679,19 @@ contract DividendDistributor is IDividendDistributor {
     }
 
     function deposit() external payable override onlyToken {
-        uint256 balanceBefore = BUSD.balanceOf(address(this));
+        uint256 balanceBefore = rewardToken.balanceOf(address(this));
 
         address[] memory path = new address[](2);
         path[0] = router.WETH();
-        path[1] = address(BUSD);
+        path[1] = address(rewardToken);
 
         router.swapExactETHForTokensSupportingFeeOnTransferTokens{
             value: msg.value
         }(0, path, address(this), block.timestamp);
 
-        uint256 amount = BUSD.balanceOf(address(this)).sub(balanceBefore);
+        uint256 amount = rewardToken.balanceOf(address(this)).sub(
+            balanceBefore
+        );
 
         totalDividends = totalDividends.add(amount);
         dividendsPerShare = dividendsPerShare.add(
@@ -742,7 +744,7 @@ contract DividendDistributor is IDividendDistributor {
         uint256 amount = getUnpaidEarnings(shareholder);
         if (amount > 0) {
             totalDistributed = totalDistributed.add(amount);
-            BUSD.transfer(shareholder, amount);
+            rewardToken.transfer(shareholder, amount);
             shareholderClaims[shareholder] = block.timestamp;
             shares[shareholder].totalRealised = shares[shareholder]
                 .totalRealised
@@ -867,9 +869,9 @@ contract SECO is ERC20Detailed, PauseOwners {
     bool public swapEnabled = true;
     IPancakeSwapRouter public router;
 
-    uint256 public rebaseInterval = 30 minutes;
+    uint256 public rebaseInterval = 15 minutes;
     uint256 public liquidityAddInterval = 5 minutes;
-    uint256 public rebaseRate = 5208; // Every rebase is 0.05% of initial supply
+    uint256 public rebaseRate = 2604; // Every rebase is 0.025% of initial supply
     uint256 public epoch = 0;
 
     bool public antibotActivated;
@@ -948,9 +950,10 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     function activateTrade() external onlyOwners {
         require(!tradingActivated, "Trading is already activated");
-        antibotBlockEnd = block.number + 2;
-        antibotTimeEnd = block.timestamp + 300;
         tradingActivated = true;
+
+        antibotBlockEnd = block.number.add(2);
+        antibotTimeEnd = block.timestamp.add(300);
         antibotActivated = true;
         isPaused = false;
     }
