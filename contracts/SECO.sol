@@ -869,9 +869,16 @@ contract SECO is ERC20Detailed, PauseOwners {
     bool public swapEnabled = true;
     IPancakeSwapRouter public router;
 
-    uint256 public rebaseInterval = 15 minutes;
+    uint256 public rebaseInterval = 10 minutes;
+    uint256 public rebaseRate = 3909;
+
+    bool public rebaseRateHalvingEnabled = true;
+    uint256 public rebaseRateHalvingInterval = 365 days;
+    uint256 public lastRebaseRateHalving;
+    uint256 public rebaseRateDivisor = 2;
+
     uint256 public liquidityAddInterval = 5 minutes;
-    uint256 public rebaseRate = 2604; // Every rebase is 0.025% of initial supply
+
     uint256 public epoch = 0;
 
     bool public antibotActivated;
@@ -898,6 +905,7 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     bool public _autoRebase;
     bool public _autoAddLiquidity;
+
     uint256 public _lastRebasedTime;
     uint256 public _lastAddLiquidityTime;
     uint256 public _totalSupply;
@@ -978,6 +986,7 @@ contract SECO is ERC20Detailed, PauseOwners {
         } else {
             _autoRebase = true;
             _lastRebasedTime = block.timestamp;
+            lastRebaseRateHalving = block.timestamp;
             antibotActivated = false;
         }
         return false;
@@ -985,6 +994,18 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     function rebase() internal {
         if (inSwap) return;
+
+        if (
+            rebaseRateHalvingEnabled &&
+            block.timestamp.sub(lastRebaseRateHalving) >=
+            rebaseRateHalvingInterval
+        ) {
+            lastRebaseRateHalving = block.timestamp;
+            rebaseRate = rebaseRate.div(rebaseRateDivisor);
+            if (rebaseRate <= 3) {
+                rebaseRateHalvingEnabled = false;
+            }
+        }
 
         _totalSupply = _totalSupply.mul((10**DECIMALS).add(rebaseRate)).div(
             10**DECIMALS
@@ -1278,6 +1299,14 @@ contract SECO is ERC20Detailed, PauseOwners {
         } else {
             _autoAddLiquidity = _flag;
         }
+    }
+
+    function setRebaseRateHalvingEnabled(bool _flag) external onlyOwners {
+        rebaseRateHalvingEnabled = _flag;
+    }
+
+    function setRebaseRateHalvingInterval(uint256 ms) external onlyOwners {
+        rebaseRateHalvingInterval = ms;
     }
 
     function setAutoRebaseInterval(uint256 ms) external onlyOwners {
