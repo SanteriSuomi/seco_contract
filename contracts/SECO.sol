@@ -1,6 +1,14 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: MIT
 
-pragma solidity >=0.7.4;
+/*
+███████ ███████  ██████  ██████      ███████ ██ ███    ██  █████  ███    ██  ██████ ███████
+██      ██      ██      ██    ██     ██      ██ ████   ██ ██   ██ ████   ██ ██      ██
+███████ █████   ██      ██    ██     █████   ██ ██ ██  ██ ███████ ██ ██  ██ ██      █████
+     ██ ██      ██      ██    ██     ██      ██ ██  ██ ██ ██   ██ ██  ██ ██ ██      ██
+███████ ███████  ██████  ██████      ██      ██ ██   ████ ██   ██ ██   ████  ██████ ███████
+*/
+
+pragma solidity ^0.8.13;
 
 contract Owners {
     event OwnerAdded(
@@ -115,7 +123,10 @@ contract PauseOwners is Owners {
         require(isExempt, "Paused");
     }
 
-    function modifyPauseExempt(address address_, bool value) public onlyOwners {
+    function modifyPauseExempt(address address_, bool value)
+        external
+        onlyOwners
+    {
         pauseExempt[address_] = value;
     }
 }
@@ -501,9 +512,9 @@ contract DividendDistributor {
         uint256 totalRealised;
     }
 
-    // Testnet
-    IERC20 rewardToken = IERC20(0x8301F2213c0eeD49a7E28Ae4c3e91722919B8B47);
-    // Mainnet
+    // Testnet BUSD
+    IERC20 rewardToken = IERC20(0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7);
+    // Mainnet BUSD
     // IERC20 rewardToken = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
     IPancakeSwapRouter router;
 
@@ -545,16 +556,12 @@ contract DividendDistributor {
     function setDistributionCriteria(
         uint256 _minPeriod,
         uint256 _minDistribution
-    ) external override onlyToken {
+    ) external onlyToken {
         minPeriod = _minPeriod;
         minDistribution = _minDistribution;
     }
 
-    function setShare(address shareholder, uint256 amount)
-        external
-        override
-        onlyToken
-    {
+    function setShare(address shareholder, uint256 amount) external onlyToken {
         if (shares[shareholder].amount > 0) {
             distributeDividend(shareholder);
         }
@@ -572,7 +579,7 @@ contract DividendDistributor {
         );
     }
 
-    function deposit() external payable override onlyToken {
+    function deposit() external payable onlyToken {
         uint256 balanceBefore = rewardToken.balanceOf(address(this));
 
         address[] memory path = new address[](2);
@@ -591,7 +598,7 @@ contract DividendDistributor {
             totalShares;
     }
 
-    function process(uint256 gas) external override onlyToken {
+    function process(uint256 gas) external onlyToken {
         uint256 shareholderCount = shareholders.length;
 
         if (shareholderCount == 0) {
@@ -611,7 +618,7 @@ contract DividendDistributor {
                 distributeDividend(shareholders[currentIndex]);
             }
 
-            gasUsed = gasUsed + gasLeft - gasleft();
+            gasUsed += (gasLeft - gasleft());
             gasLeft = gasleft();
             currentIndex++;
             iterations++;
@@ -635,7 +642,7 @@ contract DividendDistributor {
 
         uint256 amount = getUnpaidEarnings(shareholder);
         if (amount > 0) {
-            totalDistributed = totalDistributed.add(amount);
+            totalDistributed += amount;
             rewardToken.transfer(shareholder, amount);
             shareholderClaims[shareholder] = block.timestamp;
             shares[shareholder].totalRealised =
@@ -694,8 +701,7 @@ contract DividendDistributor {
         view
         returns (uint256)
     {
-        return
-            share.mul(dividendsPerShare).div(dividendsPerShareAccuracyFactor);
+        return (share * dividendsPerShare) / dividendsPerShareAccuracyFactor;
     }
 
     function addShareholder(address shareholder) internal {
@@ -714,47 +720,74 @@ contract DividendDistributor {
     }
 }
 
-contract SECO is IERC20, PauseOwners {
-    event LogRebase(uint256 indexed epoch, uint256 totalSupply);
+abstract contract ERC20Detailed is IERC20 {
+    string private _name;
+    string private _symbol;
+    uint8 private _decimals;
 
-    IPancakeSwapPair public pairContract;
-    mapping(address => bool) public _isFeeExempt;
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_
+    ) {
+        _name = name_;
+        _symbol = symbol_;
+        _decimals = decimals_;
+    }
+
+    function name() public view returns (string memory) {
+        return _name;
+    }
+
+    function symbol() public view returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() public view returns (uint8) {
+        return _decimals;
+    }
+}
+
+contract SECO is ERC20Detailed, PauseOwners {
+    event LogRebase(uint256 indexed rebaseEpoch, uint256 totalSupply);
 
     modifier validRecipient(address to) {
         require(to != address(0x0));
         _;
     }
 
-    uint256 public constant DECIMALS = 18;
-    uint256 public constant MAX_UINT256 = ~uint256(0);
+    uint256 private constant MAX_UINT256 = type(uint256).max;
+    address private constant DEAD = 0x000000000000000000000000000000000000dEaD;
+    address private constant ZERO = 0x0000000000000000000000000000000000000000;
+    uint256 private constant DECIMAL_BASE = 10**18;
 
     uint256 public burnFee = 20;
     uint256 public liquidityFee = 20;
     uint256 public buybackFee = 20;
-    uint256 public treasuryFee = 50;
+    uint256 public treasuryFee = 40;
     uint256 public dividendFee = 50;
     uint256 public totalFee =
-        burnFee.add(liquidityFee).add(buybackFee).add(treasuryFee).add(
-            dividendFee
-        );
+        burnFee + liquidityFee + buybackFee + treasuryFee + dividendFee;
     uint256 public feeDenominator = 1000;
 
-    address DEAD = 0x000000000000000000000000000000000000dEaD;
-    address ZERO = 0x0000000000000000000000000000000000000000;
+    mapping(address => bool) public _isFeeExempt;
 
-    address public autoLiquidityReceiver;
-    address public treasuryReceiver;
-    address public buybackReceiver;
+    address public autoLiquidityReceiver =
+        0x4D5c4e6C38f0C0F914858a9e9a0d0969F2e4C2eA;
+    address public treasuryReceiver =
+        0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
+    address public buybackReceiver = 0x96213A6D519e84aB2a7eFaD1ad3727010F9Fdcbf;
 
-    DividendDistributor private distributor;
     address public dividendReceiver;
-    uint256 distributorGas = 500000;
+    uint256 private distributorGas = 500000;
+    DividendDistributor private distributor;
 
-    bool public swapEnabled = true;
     IPancakeSwapRouter public router;
+    address public pair;
 
     uint256 public rebaseInterval = 1 hours;
     uint256 public rebaseRate = 15607;
+    uint256 public rebaseEpoch;
 
     bool public rebaseRateHalvingEnabled = true;
     uint256 public rebaseRateHalvingInterval = 365 days;
@@ -763,36 +796,34 @@ contract SECO is IERC20, PauseOwners {
 
     uint256 public liquidityAddInterval = 5 minutes;
 
-    uint256 public epoch = 0;
-
     bool public antibotActivated;
     uint256 private antibotBlockEnd;
     uint256 private antibotTimeEnd;
-    uint256 private maxTx = 100000 * 10**DECIMALS;
-    uint256 private maxWallet = 200000 * 10**DECIMALS;
+    uint256 private maxTx = 100000 * DECIMAL_BASE;
+    uint256 private maxWallet = 200000 * DECIMAL_BASE;
 
-    bool private tradingActivated = false;
+    bool public tradingEnabled;
+    bool public swapEnabled = true;
 
-    address public pair;
-    bool inSwap = false;
+    bool inSwap;
     modifier swapping() {
         inSwap = true;
         _;
         inSwap = false;
     }
-    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 10000000 * 10**DECIMALS; // Initial supply 10 million
+    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 10000000 * DECIMAL_BASE; // Initial supply 10 million
 
     uint256 private constant TOTAL_GONS =
         MAX_UINT256 - (MAX_UINT256 % INITIAL_FRAGMENTS_SUPPLY);
 
-    uint256 private constant MAX_SUPPLY = 1000000000 * 10**DECIMALS; // Max supply 1 billion
+    uint256 private constant MAX_SUPPLY = 1000000000 * DECIMAL_BASE; // Max supply 1 billion
 
-    bool public _autoRebase;
-    bool public _autoAddLiquidity;
+    bool public _autoRebase = false;
+    bool public _autoAddLiquidity = false;
 
     uint256 public _lastRebasedTime;
     uint256 public _lastAddLiquidityTime;
-    uint256 public _totalSupply;
+    uint256 private _totalSupply;
     uint256 private _gonsPerFragment;
 
     mapping(address => uint256) private _gonBalances;
@@ -800,7 +831,7 @@ contract SECO is IERC20, PauseOwners {
     mapping(address => bool) public botBlacklist;
     mapping(address => bool) public isDividendExempt;
 
-    constructor() ERC20Detailed("SECO", "SECO", uint8(DECIMALS)) {
+    constructor() ERC20Detailed("SECO", "SECO", uint8(18)) {
         isPaused = true;
 
         // Testnet https://amm.kiemtienonline360.com/
@@ -814,22 +845,14 @@ contract SECO is IERC20, PauseOwners {
             address(this)
         );
 
-        treasuryReceiver = 0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
-        buybackReceiver = 0x96213A6D519e84aB2a7eFaD1ad3727010F9Fdcbf;
-        autoLiquidityReceiver = 0x4D5c4e6C38f0C0F914858a9e9a0d0969F2e4C2eA;
-
-        _allowedFragments[address(this)][address(router)] = uint256(-1);
-        pairContract = IPancakeSwapPair(pair);
+        _allowedFragments[address(this)][address(router)] = type(uint256).max;
 
         distributor = new DividendDistributor(routerAddress);
         dividendReceiver = address(distributor);
 
         _totalSupply = INITIAL_FRAGMENTS_SUPPLY;
-        _gonBalances[treasuryReceiver] = TOTAL_GONS;
-        _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
-
-        _autoRebase = false;
-        _autoAddLiquidity = true;
+        _gonsPerFragment = TOTAL_GONS / _totalSupply;
+        _gonBalances[msg.sender] = TOTAL_GONS;
 
         isDividendExempt[pair] = true;
         isDividendExempt[DEAD] = true;
@@ -843,11 +866,13 @@ contract SECO is IERC20, PauseOwners {
     }
 
     function activateTrade() external onlyOwners {
-        require(!tradingActivated, "Trading is already activated");
-        tradingActivated = true;
+        require(!tradingEnabled, "Trading is already activated");
+        tradingEnabled = true;
 
-        antibotBlockEnd = block.number.add(2);
-        antibotTimeEnd = block.timestamp.add(300);
+        antibotBlockEnd = block.number + 2;
+        antibotTimeEnd = block.timestamp + 300;
+        _lastAddLiquidityTime = block.timestamp;
+        _autoAddLiquidity = true;
         antibotActivated = true;
         isPaused = false;
     }
@@ -864,15 +889,15 @@ contract SECO is IERC20, PauseOwners {
             } else if (amount > maxTx) {
                 return true;
             } else if (
-                amount.add(balanceOf(recipient)) > maxWallet &&
-                recipient != pair
+                (amount + balanceOf(recipient)) > maxWallet && recipient != pair
             ) {
                 return true;
             }
         } else {
             _autoRebase = true;
-            _lastRebasedTime = block.timestamp;
-            lastRebaseRateHalving = block.timestamp;
+            uint256 timeNow = block.timestamp;
+            _lastRebasedTime = timeNow;
+            lastRebaseRateHalving = timeNow;
             antibotActivated = false;
         }
         return false;
@@ -883,29 +908,35 @@ contract SECO is IERC20, PauseOwners {
 
         if (
             rebaseRateHalvingEnabled &&
-            block.timestamp.sub(lastRebaseRateHalving) >=
-            rebaseRateHalvingInterval
+            block.timestamp - lastRebaseRateHalving >= rebaseRateHalvingInterval
         ) {
             lastRebaseRateHalving = block.timestamp;
-            rebaseRate = rebaseRate.div(rebaseRateDivisor);
+            rebaseRate = rebaseRate / rebaseRateDivisor;
             if (rebaseRate <= 3) {
                 rebaseRateHalvingEnabled = false;
             }
         }
 
-        _totalSupply = _totalSupply.mul((10**DECIMALS).add(rebaseRate)).div(
-            10**DECIMALS
-        );
+        // If there is low volume, rebases can go out of sync. This is used to ensure that rebase rewards are the same despite low volume.
+        uint256 timeSinceLastRebase = block.timestamp - _lastRebasedTime;
+        uint256 rebasesMissed = (timeSinceLastRebase * DECIMAL_BASE) /
+            rebaseInterval /
+            DECIMAL_BASE;
+        uint256 adjustedRebaseRate = (rebaseRate +
+            DECIMAL_BASE *
+            rebasesMissed) / DECIMAL_BASE;
+
+        _totalSupply += adjustedRebaseRate;
         if (_totalSupply > MAX_SUPPLY) {
             _totalSupply = MAX_SUPPLY;
             _autoRebase = false;
         }
-        _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
+        _gonsPerFragment = TOTAL_GONS / _totalSupply;
 
-        pairContract.sync();
+        IPancakeSwapPair(pair).sync();
+        rebaseEpoch += 1;
         _lastRebasedTime = block.timestamp;
-        epoch = epoch.add(1);
-        emit LogRebase(epoch, _totalSupply);
+        emit LogRebase(rebaseEpoch, _totalSupply);
     }
 
     function transfer(address to, uint256 value)
@@ -923,10 +954,8 @@ contract SECO is IERC20, PauseOwners {
         address to,
         uint256 value
     ) external override validRecipient(to) returns (bool) {
-        if (_allowedFragments[from][msg.sender] != uint256(-1)) {
-            _allowedFragments[from][msg.sender] = _allowedFragments[from][
-                msg.sender
-            ].sub(value, "Insufficient Allowance");
+        if (_allowedFragments[from][msg.sender] != MAX_UINT256) {
+            _allowedFragments[from][msg.sender] -= value;
         }
         _transferFrom(from, to, value);
         return true;
@@ -937,8 +966,9 @@ contract SECO is IERC20, PauseOwners {
         address to,
         uint256 gonAmount
     ) internal returns (bool) {
-        _gonBalances[from] = _gonBalances[from].sub(gonAmount);
-        _gonBalances[to] = _gonBalances[to].add(gonAmount);
+        _gonBalances[from] -= gonAmount;
+        _gonBalances[to] += gonAmount;
+        emit Transfer(from, to, gonAmount / _gonsPerFragment);
         return true;
     }
 
@@ -963,8 +993,8 @@ contract SECO is IERC20, PauseOwners {
             "in_botBlacklist"
         );
 
-        uint256 gonAmount = amount.mul(_gonsPerFragment);
-        if (inSwap) {
+        uint256 gonAmount = amount * _gonsPerFragment;
+        if (inSwap || !tradingEnabled) {
             return _basicTransfer(sender, recipient, gonAmount);
         }
 
@@ -980,13 +1010,11 @@ contract SECO is IERC20, PauseOwners {
             swapBack();
         }
 
-        _gonBalances[sender] = _gonBalances[sender].sub(gonAmount);
+        _gonBalances[sender] -= gonAmount;
         uint256 gonAmountReceived = shouldTakeFee(sender, recipient)
             ? takeFee(sender, gonAmount)
             : gonAmount;
-        _gonBalances[recipient] = _gonBalances[recipient].add(
-            gonAmountReceived
-        );
+        _gonBalances[recipient] += gonAmountReceived;
 
         if (!isDividendExempt[sender]) {
             try distributor.setShare(sender, balanceOf(sender)) {} catch {}
@@ -999,11 +1027,7 @@ contract SECO is IERC20, PauseOwners {
 
         try distributor.process(distributorGas) {} catch {}
 
-        emit Transfer(
-            sender,
-            recipient,
-            gonAmountReceived.div(_gonsPerFragment)
-        );
+        emit Transfer(sender, recipient, gonAmountReceived / _gonsPerFragment);
         return true;
     }
 
@@ -1011,56 +1035,30 @@ contract SECO is IERC20, PauseOwners {
         internal
         returns (uint256)
     {
-        uint256 feeAmount = gonAmount.div(feeDenominator).mul(totalFee);
+        uint256 feeAmount = (gonAmount / feeDenominator) * totalFee;
 
-        _gonBalances[address(this)] = _gonBalances[address(this)].add( // Treasury, buyback and dividends
-            gonAmount.div(feeDenominator).mul(
-                treasuryFee.add(dividendFee).add(buybackFee)
-            )
-        );
+        _gonBalances[address(this)] +=
+            (gonAmount / feeDenominator) *
+            (treasuryFee + dividendFee + buybackFee);
 
-        _gonBalances[autoLiquidityReceiver] = _gonBalances[
-            autoLiquidityReceiver
-        ].add(gonAmount.div(feeDenominator).mul(liquidityFee));
+        _gonBalances[autoLiquidityReceiver] +=
+            (gonAmount / feeDenominator) *
+            liquidityFee;
 
-        _gonBalances[DEAD] = _gonBalances[DEAD].add(
-            gonAmount.div(feeDenominator).mul(burnFee)
-        );
+        _gonBalances[DEAD] += (gonAmount / feeDenominator) * burnFee;
 
-        emit Transfer(sender, address(this), feeAmount.div(_gonsPerFragment));
-        return gonAmount.sub(feeAmount);
+        emit Transfer(sender, address(this), feeAmount / _gonsPerFragment);
+        return gonAmount - feeAmount;
     }
 
     function addLiquidity() internal swapping {
-        uint256 autoLiquidityAmount = _gonBalances[autoLiquidityReceiver].div(
-            _gonsPerFragment
-        );
-        _gonBalances[address(this)] = _gonBalances[address(this)].add(
-            _gonBalances[autoLiquidityReceiver]
-        );
+        uint256 autoLiquidityAmount = _gonBalances[autoLiquidityReceiver] /
+            _gonsPerFragment;
+        _gonBalances[address(this)] += _gonBalances[autoLiquidityReceiver];
         _gonBalances[autoLiquidityReceiver] = 0;
-        uint256 amountToLiquify = autoLiquidityAmount.div(2);
-        uint256 amountToSwap = autoLiquidityAmount.sub(amountToLiquify);
-
-        if (amountToSwap == 0) {
-            return;
-        }
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = router.WETH();
-
-        uint256 balanceBefore = address(this).balance;
-
-        router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-            amountToSwap,
-            0,
-            path,
-            address(this),
-            block.timestamp
-        );
-
-        uint256 amountETHLiquidity = address(this).balance.sub(balanceBefore);
-
+        uint256 amountToLiquify = autoLiquidityAmount / 2;
+        uint256 amountToSwap = autoLiquidityAmount - amountToLiquify;
+        uint256 amountETHLiquidity = swapToETH(amountToSwap);
         if (amountToLiquify > 0 && amountETHLiquidity > 0) {
             router.addLiquidityETH{value: amountETHLiquidity}(
                 address(this),
@@ -1075,62 +1073,50 @@ contract SECO is IERC20, PauseOwners {
     }
 
     function swapBack() internal swapping {
-        uint256 amountToSwap = _gonBalances[address(this)].div(
-            _gonsPerFragment
-        );
-
-        if (amountToSwap == 0) {
-            return;
+        uint256 amountToSwap = _gonBalances[address(this)] / _gonsPerFragment;
+        uint256 amountETH = swapToETH(amountToSwap);
+        if (amountETH > 0) {
+            uint256 amountFee = treasuryFee + dividendFee + buybackFee;
+            (bool treasurySuccess, ) = payable(treasuryReceiver).call{
+                value: (amountETH * treasuryFee) / amountFee,
+                gas: 30000
+            }("");
+            (bool buybackSuccess, ) = payable(buybackReceiver).call{
+                value: (amountETH * buybackFee) / amountFee,
+                gas: 30000
+            }("");
+            try
+                distributor.deposit{
+                    value: (amountETH * dividendFee) / amountFee
+                }()
+            {} catch {}
         }
-
-        uint256 balanceBefore = address(this).balance;
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = router.WETH();
-
-        router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-            amountToSwap,
-            0,
-            path,
-            address(this),
-            block.timestamp
-        );
-
-        uint256 amountETH = address(this).balance.sub(balanceBefore);
-        uint256 amountFee = treasuryFee.add(dividendFee).add(buybackFee);
-
-        (bool treasurySuccess, ) = payable(treasuryReceiver).call{
-            value: amountETH.mul(treasuryFee).div(amountFee),
-            gas: 30000
-        }("");
-        (bool buybackSuccess, ) = payable(buybackReceiver).call{
-            value: amountETH.mul(buybackFee).div(amountFee),
-            gas: 30000
-        }("");
-
-        try
-            distributor.deposit{
-                value: amountETH.mul(dividendFee).div(
-                    treasuryFee.add(dividendFee)
-                )
-            }()
-        {} catch {}
     }
 
-    function manualWithdrawToTreasuryBuyback() external swapping onlyOwners {
-        uint256 amountToSwap = _gonBalances[address(this)].div(
-            _gonsPerFragment
-        );
-
-        if (amountToSwap == 0) {
-            return;
+    function manualWithdraw() external swapping onlyOwners {
+        uint256 amountToSwap = _gonBalances[address(this)] / _gonsPerFragment;
+        uint256 amountETH = swapToETH(amountToSwap);
+        if (amountETH > 0) {
+            uint256 amountFee = treasuryFee + buybackFee;
+            (bool treasurySuccess, ) = payable(treasuryReceiver).call{
+                value: (amountETH * treasuryFee) / amountFee,
+                gas: 30000
+            }("");
+            (bool buybackSuccess, ) = payable(buybackReceiver).call{
+                value: (amountETH * buybackFee) / amountFee,
+                gas: 30000
+            }("");
         }
+    }
 
-        uint256 balanceBefore = address(this).balance;
+    function swapToETH(uint256 amountToSwap) private returns (uint256) {
+        if (amountToSwap == 0) {
+            return 0;
+        }
         address[] memory path = new address[](2);
         path[0] = address(this);
         path[1] = router.WETH();
-
+        uint256 balanceBefore = address(this).balance;
         router.swapExactTokensForETHSupportingFeeOnTransferTokens(
             amountToSwap,
             0,
@@ -1138,18 +1124,7 @@ contract SECO is IERC20, PauseOwners {
             address(this),
             block.timestamp
         );
-
-        uint256 amountETH = address(this).balance.sub(balanceBefore);
-        uint256 amountFee = treasuryFee.add(buybackFee);
-
-        (bool treasurySuccess, ) = payable(treasuryReceiver).call{
-            value: amountETH.mul(treasuryFee).div(amountFee),
-            gas: 30000
-        }("");
-        (bool buybackSuccess, ) = payable(buybackReceiver).call{
-            value: amountETH.mul(buybackFee).div(amountFee),
-            gas: 30000
-        }("");
+        return address(this).balance - balanceBefore;
     }
 
     function shouldTakeFee(address from, address to)
@@ -1157,11 +1132,7 @@ contract SECO is IERC20, PauseOwners {
         view
         returns (bool)
     {
-        return
-            (pair == from || pair == to) &&
-            !_isFeeExempt[from] &&
-            !_isFeeExempt[msg.sender] &&
-            !_isFeeExempt[tx.origin];
+        return (pair == from || pair == to) && !_isFeeExempt[from];
     }
 
     function shouldRebase() internal view returns (bool) {
@@ -1175,8 +1146,8 @@ contract SECO is IERC20, PauseOwners {
     function shouldAddLiquidity() internal view returns (bool) {
         return
             _autoAddLiquidity &&
-            !inSwap &&
             msg.sender != pair &&
+            !inSwap &&
             block.timestamp >= (_lastAddLiquidityTime + liquidityAddInterval);
     }
 
@@ -1184,68 +1155,33 @@ contract SECO is IERC20, PauseOwners {
         return !inSwap && msg.sender != pair;
     }
 
-    function totalDividendsDistributed() external view returns (uint256) {
-        return distributor.totalDistributed();
-    }
-
-    function claimDividends() external {
-        distributor.claimDividend();
-    }
-
-    function showUnpaidEarnings() external view returns (uint256) {
-        return distributor.getUnpaidEarnings(msg.sender);
-    }
-
-    function getShareholder(address _addr)
-        external
-        view
-        returns (
-            uint256,
-            uint256,
-            uint256
-        )
-    {
-        return distributor.getShareholder(_addr);
-    }
-
-    function setAutoRebase(bool _flag) public onlyOwners {
-        if (_flag) {
-            _autoRebase = _flag;
-            _lastRebasedTime = block.timestamp;
-        } else {
-            _autoRebase = _flag;
-        }
-    }
-
-    function setAutoAddLiquidity(bool _flag) external onlyOwners {
-        if (_flag) {
-            _autoAddLiquidity = _flag;
-            _lastAddLiquidityTime = block.timestamp;
-        } else {
-            _autoAddLiquidity = _flag;
-        }
-    }
-
-    function setRebaseRateHalvingEnabled(bool _flag) external onlyOwners {
-        rebaseRateHalvingEnabled = _flag;
-    }
-
-    function setRebaseRateHalvingInterval(uint256 ms) external onlyOwners {
-        rebaseRateHalvingInterval = ms;
-    }
-
-    function setAutoRebaseInterval(uint256 ms) external onlyOwners {
-        rebaseInterval = ms;
+    function setRebaseSettigns(
+        bool enabled,
+        uint256 interval,
+        uint256 rate
+    ) external onlyOwners {
+        _autoRebase = enabled;
+        rebaseInterval = interval;
+        rebaseRate = rate;
         _lastRebasedTime = block.timestamp;
     }
 
-    function setAutoAddLiquidityInterval(uint256 ms) external onlyOwners {
-        liquidityAddInterval = ms;
-        _lastAddLiquidityTime = block.timestamp;
+    function setRebaseHalvingSettings(bool enabled, uint256 interval)
+        external
+        onlyOwners
+    {
+        rebaseRateHalvingEnabled = enabled;
+        rebaseRateHalvingInterval = interval;
+        _lastRebasedTime = block.timestamp;
     }
 
-    function setAutoRebaseRate(uint256 rate) external onlyOwners {
-        rebaseRate = rate;
+    function setAutoAddLiquiditySettings(bool enabled, uint256 interval)
+        external
+        onlyOwners
+    {
+        _autoAddLiquidity = enabled;
+        liquidityAddInterval = interval;
+        _lastAddLiquidityTime = block.timestamp;
     }
 
     function allowance(address owner_, address spender)
@@ -1257,41 +1193,6 @@ contract SECO is IERC20, PauseOwners {
         return _allowedFragments[owner_][spender];
     }
 
-    function decreaseAllowance(address spender, uint256 subtractedValue)
-        external
-        returns (bool)
-    {
-        uint256 oldValue = _allowedFragments[msg.sender][spender];
-        if (subtractedValue >= oldValue) {
-            _allowedFragments[msg.sender][spender] = 0;
-        } else {
-            _allowedFragments[msg.sender][spender] = oldValue.sub(
-                subtractedValue
-            );
-        }
-        emit Approval(
-            msg.sender,
-            spender,
-            _allowedFragments[msg.sender][spender]
-        );
-        return true;
-    }
-
-    function increaseAllowance(address spender, uint256 addedValue)
-        external
-        returns (bool)
-    {
-        _allowedFragments[msg.sender][spender] = _allowedFragments[msg.sender][
-            spender
-        ].add(addedValue);
-        emit Approval(
-            msg.sender,
-            spender,
-            _allowedFragments[msg.sender][spender]
-        );
-        return true;
-    }
-
     function approve(address spender, uint256 value)
         external
         override
@@ -1300,10 +1201,6 @@ contract SECO is IERC20, PauseOwners {
         _allowedFragments[msg.sender][spender] = value;
         emit Approval(msg.sender, spender, value);
         return true;
-    }
-
-    function checkFeeExempt(address _addr) external view returns (bool) {
-        return _isFeeExempt[_addr];
     }
 
     function setIsDividendExempt(address holder, bool exempt)
@@ -1320,23 +1217,46 @@ contract SECO is IERC20, PauseOwners {
         }
     }
 
-    function setDistributionCriteria(
+    function claimDividends() external {
+        distributor.claimDividend();
+    }
+
+    function showUnpaidEarnings() external view returns (uint256) {
+        return distributor.getUnpaidEarnings(msg.sender);
+    }
+
+    function totalDividendsDistributed() external view returns (uint256) {
+        return distributor.totalDistributed();
+    }
+
+    function getShareholder(address _addr)
+        external
+        view
+        returns (
+            uint256,
+            uint256,
+            uint256
+        )
+    {
+        return distributor.getShareholder(_addr);
+    }
+
+    function setDividendDistributionCriteria(
         uint256 _minPeriod,
         uint256 _minDistribution
     ) external onlyOwners {
         distributor.setDistributionCriteria(_minPeriod, _minDistribution);
     }
 
-    function setDistributorSettings(uint256 gas) external onlyOwners {
+    function setDividendDistributorGas(uint256 gas) external onlyOwners {
         require(gas < 750000, "Gas must be lower than 750000");
         distributorGas = gas;
     }
 
     function getCirculatingSupply() public view returns (uint256) {
         return
-            (TOTAL_GONS.sub(_gonBalances[DEAD]).sub(_gonBalances[ZERO])).div(
-                _gonsPerFragment
-            );
+            (TOTAL_GONS - _gonBalances[DEAD] - _gonBalances[ZERO]) /
+            _gonsPerFragment;
     }
 
     function isNotInSwap() external view returns (bool) {
@@ -1357,18 +1277,33 @@ contract SECO is IERC20, PauseOwners {
         treasuryReceiver = _treasuryReceiver;
     }
 
+    function checkFeeExempt(address _addr) external view returns (bool) {
+        return _isFeeExempt[_addr];
+    }
+
+    function setFeeExempt(address _addr, bool _flag) external onlyOwners {
+        _isFeeExempt[_addr] = _flag;
+    }
+
     function setFees(
         uint256 _burnFee,
+        uint256 _buybackFee,
         uint256 _liquidityFee,
         uint256 _dividendFee,
         uint256 _treasuryFee
     ) external onlyOwners {
         burnFee = _burnFee;
+        buybackFee = _buybackFee;
         liquidityFee = _liquidityFee;
         dividendFee = _dividendFee;
         treasuryFee = _treasuryFee;
-        totalFee = burnFee.add(liquidityFee).add(dividendFee).add(treasuryFee);
-        require(totalFee <= 200); // Hardcode max 20% fees
+        totalFee =
+            burnFee +
+            buybackFee +
+            liquidityFee +
+            dividendFee +
+            treasuryFee;
+        require(totalFee <= 200);
     }
 
     function getLiquidityBacking(uint256 accuracy)
@@ -1376,31 +1311,20 @@ contract SECO is IERC20, PauseOwners {
         view
         returns (uint256)
     {
-        uint256 liquidityBalance = _gonBalances[pair].div(_gonsPerFragment);
-        return
-            accuracy.mul(liquidityBalance.mul(2)).div(getCirculatingSupply());
-    }
-
-    function setFeeExempt(address _addr, bool _val) external onlyOwners {
-        _isFeeExempt[_addr] = _val;
+        uint256 liquidityBalance = _gonBalances[pair] / _gonsPerFragment;
+        return (accuracy * (liquidityBalance * 2)) / getCirculatingSupply();
     }
 
     function setBotBlacklist(address _address, bool _flag) external onlyOwners {
-        if (isContract(_address)) {
-            // Is a contract
+        if (isContract(_address) && _address != pair) {
             botBlacklist[_address] = _flag;
         } else {
-            // Is not a contract
             require(
                 !_flag,
-                "Can only disable blacklist for user owner addresses, not enable"
+                "Can only disable blacklist for user owner addresses"
             );
             botBlacklist[_address] = _flag;
         }
-    }
-
-    function setLP(address _address) external onlyOwners {
-        pairContract = IPancakeSwapPair(_address);
     }
 
     function totalSupply() external view override returns (uint256) {
@@ -1408,7 +1332,7 @@ contract SECO is IERC20, PauseOwners {
     }
 
     function balanceOf(address account) public view override returns (uint256) {
-        return _gonBalances[account].div(_gonsPerFragment);
+        return _gonBalances[account] / _gonsPerFragment;
     }
 
     function isContract(address addr) internal view returns (bool) {
