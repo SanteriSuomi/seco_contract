@@ -120,97 +120,6 @@ contract PauseOwners is Owners {
     }
 }
 
-library SafeMathInt {
-    int256 private constant MIN_INT256 = int256(1) << 255;
-    int256 private constant MAX_INT256 = ~(int256(1) << 255);
-
-    function mul(int256 a, int256 b) internal pure returns (int256) {
-        int256 c = a * b;
-
-        require(c != MIN_INT256 || (a & MIN_INT256) != (b & MIN_INT256));
-        require((b == 0) || (c / b == a));
-        return c;
-    }
-
-    function div(int256 a, int256 b) internal pure returns (int256) {
-        require(b != -1 || a != MIN_INT256);
-
-        return a / b;
-    }
-
-    function sub(int256 a, int256 b) internal pure returns (int256) {
-        int256 c = a - b;
-        require((b >= 0 && c <= a) || (b < 0 && c > a));
-        return c;
-    }
-
-    function add(int256 a, int256 b) internal pure returns (int256) {
-        int256 c = a + b;
-        require((b >= 0 && c >= a) || (b < 0 && c < a));
-        return c;
-    }
-
-    function abs(int256 a) internal pure returns (int256) {
-        require(a != MIN_INT256);
-        return a < 0 ? -a : a;
-    }
-}
-
-library SafeMath {
-    function add(uint256 a, uint256 b) internal pure returns (uint256) {
-        uint256 c = a + b;
-        require(c >= a, "SafeMath: addition overflow");
-
-        return c;
-    }
-
-    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
-        return sub(a, b, "SafeMath: subtraction overflow");
-    }
-
-    function sub(
-        uint256 a,
-        uint256 b,
-        string memory errorMessage
-    ) internal pure returns (uint256) {
-        require(b <= a, errorMessage);
-        uint256 c = a - b;
-
-        return c;
-    }
-
-    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-        if (a == 0) {
-            return 0;
-        }
-
-        uint256 c = a * b;
-        require(c / a == b, "SafeMath: multiplication overflow");
-
-        return c;
-    }
-
-    function div(uint256 a, uint256 b) internal pure returns (uint256) {
-        return div(a, b, "SafeMath: division by zero");
-    }
-
-    function div(
-        uint256 a,
-        uint256 b,
-        string memory errorMessage
-    ) internal pure returns (uint256) {
-        require(b > 0, errorMessage);
-        uint256 c = a / b;
-
-        return c;
-    }
-
-    function mod(uint256 a, uint256 b) internal pure returns (uint256) {
-        require(b != 0);
-        return a % b;
-    }
-}
-
 interface IERC20 {
     function totalSupply() external view returns (uint256);
 
@@ -583,22 +492,7 @@ interface IPancakeSwapFactory {
     function setFeeToSetter(address) external;
 }
 
-interface IDividendDistributor {
-    function setDistributionCriteria(
-        uint256 _minPeriod,
-        uint256 _minDistribution
-    ) external;
-
-    function setShare(address shareholder, uint256 amount) external;
-
-    function deposit() external payable;
-
-    function process(uint256 gas) external;
-}
-
-contract DividendDistributor is IDividendDistributor {
-    using SafeMath for uint256;
-
+contract DividendDistributor {
     address _token;
 
     struct Share {
@@ -671,7 +565,7 @@ contract DividendDistributor is IDividendDistributor {
             removeShareholder(shareholder);
         }
 
-        totalShares = totalShares.sub(shares[shareholder].amount).add(amount);
+        totalShares -= shares[shareholder].amount + amount;
         shares[shareholder].amount = amount;
         shares[shareholder].totalExcluded = getCumulativeDividends(
             shares[shareholder].amount
@@ -689,14 +583,12 @@ contract DividendDistributor is IDividendDistributor {
             value: msg.value
         }(0, path, address(this), block.timestamp);
 
-        uint256 amount = rewardToken.balanceOf(address(this)).sub(
-            balanceBefore
-        );
+        uint256 amount = rewardToken.balanceOf(address(this)) - balanceBefore;
 
-        totalDividends = totalDividends.add(amount);
-        dividendsPerShare = dividendsPerShare.add(
-            dividendsPerShareAccuracyFactor.mul(amount).div(totalShares)
-        );
+        totalDividends += amount;
+        dividendsPerShare +=
+            (dividendsPerShareAccuracyFactor * amount) /
+            totalShares;
     }
 
     function process(uint256 gas) external override onlyToken {
@@ -719,7 +611,7 @@ contract DividendDistributor is IDividendDistributor {
                 distributeDividend(shareholders[currentIndex]);
             }
 
-            gasUsed = gasUsed.add(gasLeft.sub(gasleft()));
+            gasUsed = gasUsed + gasLeft - gasleft();
             gasLeft = gasleft();
             currentIndex++;
             iterations++;
@@ -746,9 +638,9 @@ contract DividendDistributor is IDividendDistributor {
             totalDistributed = totalDistributed.add(amount);
             rewardToken.transfer(shareholder, amount);
             shareholderClaims[shareholder] = block.timestamp;
-            shares[shareholder].totalRealised = shares[shareholder]
-                .totalRealised
-                .add(amount);
+            shares[shareholder].totalRealised =
+                shares[shareholder].totalRealised +
+                amount;
             shares[shareholder].totalExcluded = getCumulativeDividends(
                 shares[shareholder].amount
             );
@@ -777,7 +669,7 @@ contract DividendDistributor is IDividendDistributor {
             return 0;
         }
 
-        return shareholderTotalDividends.sub(shareholderTotalExcluded);
+        return shareholderTotalDividends - shareholderTotalExcluded;
     }
 
     function getShareholder(address _addr)
@@ -822,38 +714,7 @@ contract DividendDistributor is IDividendDistributor {
     }
 }
 
-abstract contract ERC20Detailed is IERC20 {
-    string private _name;
-    string private _symbol;
-    uint8 private _decimals;
-
-    constructor(
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_
-    ) {
-        _name = name_;
-        _symbol = symbol_;
-        _decimals = decimals_;
-    }
-
-    function name() public view returns (string memory) {
-        return _name;
-    }
-
-    function symbol() public view returns (string memory) {
-        return _symbol;
-    }
-
-    function decimals() public view returns (uint8) {
-        return _decimals;
-    }
-}
-
-contract SECO is ERC20Detailed, PauseOwners {
-    using SafeMath for uint256;
-    using SafeMathInt for int256;
-
+contract SECO is IERC20, PauseOwners {
     event LogRebase(uint256 indexed epoch, uint256 totalSupply);
 
     IPancakeSwapPair public pairContract;
