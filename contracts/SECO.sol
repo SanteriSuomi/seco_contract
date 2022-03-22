@@ -911,8 +911,8 @@ contract SECO is ERC20Detailed, PauseOwners {
             block.timestamp - lastRebaseRateHalving >= rebaseRateHalvingInterval
         ) {
             lastRebaseRateHalving = block.timestamp;
-            rebaseRate = rebaseRate / rebaseRateDivisor;
-            if (rebaseRate <= 3) {
+            rebaseRate /= rebaseRateDivisor;
+            if (rebaseRate <= 3 * DECIMAL_BASE) {
                 rebaseRateHalvingEnabled = false;
             }
         }
