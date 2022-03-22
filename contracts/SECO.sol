@@ -786,7 +786,7 @@ contract SECO is ERC20Detailed, PauseOwners {
     address public pair;
 
     uint256 public rebaseInterval = 1 hours;
-    uint256 public rebaseRate = 15607;
+    uint256 public rebaseRate = 15607 * DECIMAL_BASE;
     uint256 public rebaseEpoch;
 
     bool public rebaseRateHalvingEnabled = true;
@@ -917,14 +917,10 @@ contract SECO is ERC20Detailed, PauseOwners {
             }
         }
 
-        // If there is low volume, rebases can go out of sync. This is used to ensure that rebase rewards are the same despite low volume.
         uint256 timeSinceLastRebase = block.timestamp - _lastRebasedTime;
-        uint256 rebasesMissed = (timeSinceLastRebase * DECIMAL_BASE) /
-            rebaseInterval /
-            DECIMAL_BASE;
-        uint256 adjustedRebaseRate = (rebaseRate +
-            DECIMAL_BASE *
-            rebasesMissed) / DECIMAL_BASE;
+        uint256 rebasesMissed = rebaseRate * timeSinceLastRebase /
+            rebaseInterval;
+        uint256 adjustedRebaseRate = rebaseRate + rebasesMissed;
 
         _totalSupply += adjustedRebaseRate;
         if (_totalSupply > MAX_SUPPLY) {
