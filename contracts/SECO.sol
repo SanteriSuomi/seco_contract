@@ -750,6 +750,11 @@ abstract contract ERC20Detailed is IERC20 {
 
 contract SECO is ERC20Detailed, PauseOwners {
     event LogRebase(uint256 indexed rebaseEpoch, uint256 totalSupply);
+    event LogAddLiquidity(
+        uint256 indexed timestamp,
+        uint256 amountETH,
+        uint256 amountToken
+    );
 
     modifier validRecipient(address to) {
         require(to != address(0x0));
@@ -759,12 +764,14 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 private constant MAX_UINT256 = type(uint256).max;
     address private constant DEAD = 0x000000000000000000000000000000000000dEaD;
     address private constant ZERO = 0x0000000000000000000000000000000000000000;
-    uint256 private constant DECIMAL_BASE = 10**18;
+    uint256 private constant DECIMAL_BASE = 10**5;
+    uint256 private constant DECIMAL_RATE = 10**7;
 
-    uint256 public burnFee = 20;
-    uint256 public liquidityFee = 20;
-    uint256 public buybackFee = 20;
-    uint256 public treasuryFee = 40;
+    uint256 public constant maxTotalFee = 200;
+    uint256 public burnFee = 25;
+    uint256 public liquidityFee = 25;
+    uint256 public buybackFee = 25;
+    uint256 public treasuryFee = 25;
     uint256 public dividendFee = 50;
     uint256 public totalFee =
         burnFee + liquidityFee + buybackFee + treasuryFee + dividendFee;
@@ -778,15 +785,15 @@ contract SECO is ERC20Detailed, PauseOwners {
         0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
     address public buybackReceiver = 0x96213A6D519e84aB2a7eFaD1ad3727010F9Fdcbf;
 
-    address public dividendReceiver;
+    mapping(address => bool) public isDividendExempt;
+    DividendDistributor public distributor;
     uint256 private distributorGas = 500000;
-    DividendDistributor private distributor;
 
     IPancakeSwapRouter public router;
     address public pair;
 
-    uint256 public rebaseInterval = 1 hours;
-    uint256 public rebaseRate = 15607 * DECIMAL_BASE;
+    uint256 public rebaseInterval = 15 minutes;
+    uint256 public rebaseRate = 3910; // 0.0391%
     uint256 public rebaseEpoch;
 
     bool public rebaseRateHalvingEnabled = true;
@@ -796,11 +803,12 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     uint256 public liquidityAddInterval = 5 minutes;
 
+    mapping(address => bool) public botBlacklist;
     bool public antibotActivated;
     uint256 private antibotBlockEnd;
     uint256 private antibotTimeEnd;
-    uint256 private maxTx = 100000 * DECIMAL_BASE;
-    uint256 private maxWallet = 200000 * DECIMAL_BASE;
+    uint256 private maxTx = 1000 * DECIMAL_BASE;
+    uint256 private maxWallet = 2000 * DECIMAL_BASE;
 
     bool public tradingEnabled;
     bool public swapEnabled = true;
@@ -811,12 +819,6 @@ contract SECO is ERC20Detailed, PauseOwners {
         _;
         inSwap = false;
     }
-    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 10000000 * DECIMAL_BASE; // Initial supply 10 million
-
-    uint256 private constant TOTAL_GONS =
-        MAX_UINT256 - (MAX_UINT256 % INITIAL_FRAGMENTS_SUPPLY);
-
-    uint256 private constant MAX_SUPPLY = 1000000000 * DECIMAL_BASE; // Max supply 1 billion
 
     bool public _autoRebase = false;
     bool public _autoAddLiquidity = false;
@@ -826,12 +828,15 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 private _totalSupply;
     uint256 private _gonsPerFragment;
 
+    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 100000 * DECIMAL_BASE;
+    uint256 private constant TOTAL_GONS =
+        MAX_UINT256 - (MAX_UINT256 % INITIAL_FRAGMENTS_SUPPLY);
+    uint256 private constant MAX_SUPPLY = 1000000000 * DECIMAL_BASE;
+
     mapping(address => uint256) private _gonBalances;
     mapping(address => mapping(address => uint256)) private _allowedFragments;
-    mapping(address => bool) public botBlacklist;
-    mapping(address => bool) public isDividendExempt;
 
-    constructor() ERC20Detailed("SECO", "SECO", uint8(18)) {
+    constructor() ERC20Detailed("SECO", "SECO", uint8(5)) {
         isPaused = true;
 
         // Testnet https://amm.kiemtienonline360.com/
@@ -848,7 +853,6 @@ contract SECO is ERC20Detailed, PauseOwners {
         _allowedFragments[address(this)][address(router)] = type(uint256).max;
 
         distributor = new DividendDistributor(routerAddress);
-        dividendReceiver = address(distributor);
 
         _totalSupply = INITIAL_FRAGMENTS_SUPPLY;
         _gonsPerFragment = TOTAL_GONS / _totalSupply;
@@ -912,17 +916,24 @@ contract SECO is ERC20Detailed, PauseOwners {
         ) {
             lastRebaseRateHalving = block.timestamp;
             rebaseRate /= rebaseRateDivisor;
-            if (rebaseRate <= 3 * DECIMAL_BASE) {
+            if (rebaseRate <= 3) {
                 rebaseRateHalvingEnabled = false;
             }
         }
 
-        uint256 timeSinceLastRebase = block.timestamp - _lastRebasedTime;
-        uint256 rebasesMissed = rebaseRate * timeSinceLastRebase /
-            rebaseInterval;
-        uint256 adjustedRebaseRate = rebaseRate + rebasesMissed;
+        uint256 timeSinceLastRebase = block.timestamp -
+            (_lastRebasedTime + rebaseInterval);
+        if (timeSinceLastRebase > 0) {
+            uint256 rebasesMissed = (rebaseRate * timeSinceLastRebase) /
+                rebaseInterval;
+            uint256 timeAdjustedRebaseRate = rebaseRate + rebasesMissed;
+            _totalSupply +=
+                (_totalSupply * timeAdjustedRebaseRate) /
+                DECIMAL_RATE;
+        } else {
+            _totalSupply += (_totalSupply * rebaseRate) / DECIMAL_RATE;
+        }
 
-        _totalSupply += adjustedRebaseRate;
         if (_totalSupply > MAX_SUPPLY) {
             _totalSupply = MAX_SUPPLY;
             _autoRebase = false;
@@ -1063,6 +1074,11 @@ contract SECO is ERC20Detailed, PauseOwners {
                 0,
                 autoLiquidityReceiver,
                 block.timestamp
+            );
+            emit LogAddLiquidity(
+                block.timestamp,
+                amountETHLiquidity,
+                amountToLiquify
             );
         }
         _lastAddLiquidityTime = block.timestamp;
@@ -1213,30 +1229,6 @@ contract SECO is ERC20Detailed, PauseOwners {
         }
     }
 
-    function claimDividends() external {
-        distributor.claimDividend();
-    }
-
-    function showUnpaidEarnings() external view returns (uint256) {
-        return distributor.getUnpaidEarnings(msg.sender);
-    }
-
-    function totalDividendsDistributed() external view returns (uint256) {
-        return distributor.totalDistributed();
-    }
-
-    function getShareholder(address _addr)
-        external
-        view
-        returns (
-            uint256,
-            uint256,
-            uint256
-        )
-    {
-        return distributor.getShareholder(_addr);
-    }
-
     function setDividendDistributionCriteria(
         uint256 _minPeriod,
         uint256 _minDistribution
@@ -1299,7 +1291,7 @@ contract SECO is ERC20Detailed, PauseOwners {
             liquidityFee +
             dividendFee +
             treasuryFee;
-        require(totalFee <= 200);
+        require(totalFee <= maxTotalFee);
     }
 
     function getLiquidityBacking(uint256 accuracy)
@@ -1331,12 +1323,8 @@ contract SECO is ERC20Detailed, PauseOwners {
         return _gonBalances[account] / _gonsPerFragment;
     }
 
-    function isContract(address addr) internal view returns (bool) {
-        uint256 size;
-        assembly {
-            size := extcodesize(addr)
-        }
-        return size > 0;
+    function isContract(address account) internal view returns (bool) {
+        return account.code.length > 0;
     }
 
     receive() external payable {}
