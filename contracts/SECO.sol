@@ -781,8 +781,8 @@ contract SECO is ERC20Detailed, PauseOwners {
         buyBurnFee + buyLiquidityFee + buyTreasuryFee + buyDividendFee;
 
     uint256 public sellBurnFee = 50;
-    uint256 public sellLiquidityFee = 50;
-    uint256 public sellTreasuryFee = 25;
+    uint256 public sellLiquidityFee = 25;
+    uint256 public sellTreasuryFee = 50;
     uint256 public sellDividendFee = 50;
     uint256 public sellTotalFee =
         sellBurnFee + sellLiquidityFee + sellTreasuryFee + sellDividendFee;
