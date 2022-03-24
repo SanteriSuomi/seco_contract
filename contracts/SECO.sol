@@ -6,6 +6,10 @@
 ███████ █████   ██      ██    ██     █████   ██ ██ ██  ██ ███████ ██ ██  ██ ██      █████
      ██ ██      ██      ██    ██     ██      ██ ██  ██ ██ ██   ██ ██  ██ ██ ██      ██
 ███████ ███████  ██████  ██████      ██      ██ ██   ████ ██   ██ ██   ████  ██████ ███████
+
+Website: https://seco.finance/
+
+sa5#4683 🐵
 */
 
 pragma solidity ^0.8.13;
@@ -768,13 +772,21 @@ contract SECO is ERC20Detailed, PauseOwners {
     uint256 private constant DECIMAL_RATE = 10**7;
 
     uint256 public constant maxTotalFee = 200;
-    uint256 public burnFee = 25;
-    uint256 public liquidityFee = 25;
-    uint256 public buybackFee = 25;
-    uint256 public treasuryFee = 25;
-    uint256 public dividendFee = 50;
-    uint256 public totalFee =
-        burnFee + liquidityFee + buybackFee + treasuryFee + dividendFee;
+
+    uint256 public buyBurnFee = 25;
+    uint256 public buyLiquidityFee = 25;
+    uint256 public buyTreasuryFee = 25;
+    uint256 public buyDividendFee = 50;
+    uint256 public buyTotalFee =
+        buyBurnFee + buyLiquidityFee + buyTreasuryFee + buyDividendFee;
+
+    uint256 public sellBurnFee = 50;
+    uint256 public sellLiquidityFee = 50;
+    uint256 public sellTreasuryFee = 25;
+    uint256 public sellDividendFee = 50;
+    uint256 public sellTotalFee =
+        sellBurnFee + sellLiquidityFee + sellTreasuryFee + sellDividendFee;
+
     uint256 public feeDenominator = 1000;
 
     mapping(address => bool) public _isFeeExempt;
@@ -792,8 +804,8 @@ contract SECO is ERC20Detailed, PauseOwners {
     IPancakeSwapRouter public router;
     address public pair;
 
-    uint256 public rebaseInterval = 15 minutes;
-    uint256 public rebaseRate = 3910; // 0.0391%
+    uint256 public rebaseInterval = 10 minutes;
+    uint256 public rebaseRate = 260; // 0.00260%
     uint256 public rebaseEpoch;
 
     bool public rebaseRateHalvingEnabled = true;
@@ -916,7 +928,7 @@ contract SECO is ERC20Detailed, PauseOwners {
         ) {
             lastRebaseRateHalving = block.timestamp;
             rebaseRate /= rebaseRateDivisor;
-            if (rebaseRate <= 3) {
+            if (rebaseRate <= 4) {
                 rebaseRateHalvingEnabled = false;
             }
         }
@@ -1042,11 +1054,28 @@ contract SECO is ERC20Detailed, PauseOwners {
         internal
         returns (uint256)
     {
-        uint256 feeAmount = (gonAmount / feeDenominator) * totalFee;
+        uint256 feeAmount;
+        uint256 treasuryFee;
+        uint256 dividendFee;
+        uint256 liquidityFee;
+        uint256 burnFee;
+        if (sender == pair) {
+            feeAmount = (gonAmount / feeDenominator) * buyTotalFee;
+            treasuryFee = buyTreasuryFee;
+            dividendFee = buyDividendFee;
+            liquidityFee = buyLiquidityFee;
+            burnFee = buyBurnFee;
+        } else {
+            feeAmount = (gonAmount / feeDenominator) * sellTotalFee;
+            treasuryFee = sellTreasuryFee;
+            dividendFee = sellDividendFee;
+            liquidityFee = sellLiquidityFee;
+            burnFee = sellBurnFee;
+        }
 
         _gonBalances[address(this)] +=
             (gonAmount / feeDenominator) *
-            (treasuryFee + dividendFee + buybackFee);
+            (treasuryFee + dividendFee);
 
         _gonBalances[autoLiquidityReceiver] +=
             (gonAmount / feeDenominator) *
@@ -1088,13 +1117,11 @@ contract SECO is ERC20Detailed, PauseOwners {
         uint256 amountToSwap = _gonBalances[address(this)] / _gonsPerFragment;
         uint256 amountETH = swapToETH(amountToSwap);
         if (amountETH > 0) {
-            uint256 amountFee = treasuryFee + dividendFee + buybackFee;
-            (bool treasurySuccess, ) = payable(treasuryReceiver).call{
+            uint256 treasuryFee = (buyTreasuryFee + sellTreasuryFee) / 2;
+            uint256 dividendFee = (buyDividendFee + sellDividendFee) / 2;
+            uint256 amountFee = treasuryFee + dividendFee;
+            payable(treasuryReceiver).call{
                 value: (amountETH * treasuryFee) / amountFee,
-                gas: 30000
-            }("");
-            (bool buybackSuccess, ) = payable(buybackReceiver).call{
-                value: (amountETH * buybackFee) / amountFee,
                 gas: 30000
             }("");
             try
@@ -1109,15 +1136,7 @@ contract SECO is ERC20Detailed, PauseOwners {
         uint256 amountToSwap = _gonBalances[address(this)] / _gonsPerFragment;
         uint256 amountETH = swapToETH(amountToSwap);
         if (amountETH > 0) {
-            uint256 amountFee = treasuryFee + buybackFee;
-            (bool treasurySuccess, ) = payable(treasuryReceiver).call{
-                value: (amountETH * treasuryFee) / amountFee,
-                gas: 30000
-            }("");
-            (bool buybackSuccess, ) = payable(buybackReceiver).call{
-                value: (amountETH * buybackFee) / amountFee,
-                gas: 30000
-            }("");
+            payable(treasuryReceiver).call{value: amountETH, gas: 30000}("");
         }
     }
 
@@ -1167,7 +1186,7 @@ contract SECO is ERC20Detailed, PauseOwners {
         return !inSwap && msg.sender != pair;
     }
 
-    function setRebaseSettigns(
+    function setRebaseSettings(
         bool enabled,
         uint256 interval,
         uint256 rate
@@ -1273,25 +1292,36 @@ contract SECO is ERC20Detailed, PauseOwners {
         _isFeeExempt[_addr] = _flag;
     }
 
-    function setFees(
+    function setBuyFees(
         uint256 _burnFee,
-        uint256 _buybackFee,
         uint256 _liquidityFee,
         uint256 _dividendFee,
         uint256 _treasuryFee
     ) external onlyOwners {
-        burnFee = _burnFee;
-        buybackFee = _buybackFee;
-        liquidityFee = _liquidityFee;
-        dividendFee = _dividendFee;
-        treasuryFee = _treasuryFee;
-        totalFee =
-            burnFee +
-            buybackFee +
-            liquidityFee +
-            dividendFee +
-            treasuryFee;
-        require(totalFee <= maxTotalFee);
+        require(
+            _burnFee + _liquidityFee + _dividendFee + _treasuryFee <=
+                maxTotalFee
+        );
+        buyBurnFee = _burnFee;
+        buyLiquidityFee = _liquidityFee;
+        buyDividendFee = _dividendFee;
+        buyTreasuryFee = _treasuryFee;
+    }
+
+    function setSellFees(
+        uint256 _burnFee,
+        uint256 _liquidityFee,
+        uint256 _dividendFee,
+        uint256 _treasuryFee
+    ) external onlyOwners {
+        require(
+            _burnFee + _liquidityFee + _dividendFee + _treasuryFee <=
+                maxTotalFee
+        );
+        sellBurnFee = _burnFee;
+        sellLiquidityFee = _liquidityFee;
+        sellDividendFee = _dividendFee;
+        sellTreasuryFee = _treasuryFee;
     }
 
     function getLiquidityBacking(uint256 accuracy)
