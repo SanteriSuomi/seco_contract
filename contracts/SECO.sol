@@ -773,16 +773,15 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     uint256 public constant maxTotalFee = 200;
 
-    uint256 public buyBurnFee = 25;
     uint256 public buyLiquidityFee = 25;
     uint256 public buyTreasuryFee = 25;
     uint256 public buyDividendFee = 50;
     uint256 public buyTotalFee =
-        buyBurnFee + buyLiquidityFee + buyTreasuryFee + buyDividendFee;
+        buyLiquidityFee + buyTreasuryFee + buyDividendFee;
 
     uint256 public sellBurnFee = 50;
     uint256 public sellLiquidityFee = 25;
-    uint256 public sellTreasuryFee = 50;
+    uint256 public sellTreasuryFee = 75;
     uint256 public sellDividendFee = 50;
     uint256 public sellTotalFee =
         sellBurnFee + sellLiquidityFee + sellTreasuryFee + sellDividendFee;
@@ -795,7 +794,6 @@ contract SECO is ERC20Detailed, PauseOwners {
         0x4D5c4e6C38f0C0F914858a9e9a0d0969F2e4C2eA;
     address public treasuryReceiver =
         0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
-    address public buybackReceiver = 0x96213A6D519e84aB2a7eFaD1ad3727010F9Fdcbf;
 
     mapping(address => bool) public isDividendExempt;
     DividendDistributor public distributor;
@@ -805,7 +803,7 @@ contract SECO is ERC20Detailed, PauseOwners {
     address public pair;
 
     uint256 public rebaseInterval = 10 minutes;
-    uint256 public rebaseRate = 260; // 0.00260%
+    uint256 public rebaseRate = 2600; // 0.0260%
     uint256 public rebaseEpoch;
 
     bool public rebaseRateHalvingEnabled = true;
@@ -877,7 +875,6 @@ contract SECO is ERC20Detailed, PauseOwners {
 
         _isFeeExempt[treasuryReceiver] = true;
         _isFeeExempt[autoLiquidityReceiver] = true;
-        _isFeeExempt[buybackReceiver] = true;
         _isFeeExempt[address(this)] = true;
     }
 
@@ -943,7 +940,9 @@ contract SECO is ERC20Detailed, PauseOwners {
                 (_totalSupply * timeAdjustedRebaseRate) /
                 DECIMAL_RATE;
         } else {
-            _totalSupply += (_totalSupply * rebaseRate) / DECIMAL_RATE;
+            _totalSupply +=
+                (getCirculatingSupplyExcludingLiquidity() * rebaseRate) /
+                DECIMAL_RATE;
         }
 
         if (_totalSupply > MAX_SUPPLY) {
@@ -1058,19 +1057,17 @@ contract SECO is ERC20Detailed, PauseOwners {
         uint256 treasuryFee;
         uint256 dividendFee;
         uint256 liquidityFee;
-        uint256 burnFee;
         if (sender == pair) {
             feeAmount = (gonAmount / feeDenominator) * buyTotalFee;
             treasuryFee = buyTreasuryFee;
             dividendFee = buyDividendFee;
             liquidityFee = buyLiquidityFee;
-            burnFee = buyBurnFee;
         } else {
             feeAmount = (gonAmount / feeDenominator) * sellTotalFee;
             treasuryFee = sellTreasuryFee;
             dividendFee = sellDividendFee;
             liquidityFee = sellLiquidityFee;
-            burnFee = sellBurnFee;
+            _gonBalances[DEAD] += (gonAmount / feeDenominator) * sellBurnFee;
         }
 
         _gonBalances[address(this)] +=
@@ -1080,8 +1077,6 @@ contract SECO is ERC20Detailed, PauseOwners {
         _gonBalances[autoLiquidityReceiver] +=
             (gonAmount / feeDenominator) *
             liquidityFee;
-
-        _gonBalances[DEAD] += (gonAmount / feeDenominator) * burnFee;
 
         emit Transfer(sender, address(this), feeAmount / _gonsPerFragment);
         return gonAmount - feeAmount;
@@ -1266,6 +1261,18 @@ contract SECO is ERC20Detailed, PauseOwners {
             _gonsPerFragment;
     }
 
+    function getCirculatingSupplyExcludingLiquidity()
+        public
+        view
+        returns (uint256)
+    {
+        return
+            (TOTAL_GONS -
+                _gonBalances[DEAD] -
+                _gonBalances[ZERO] -
+                _gonBalances[pair]) / _gonsPerFragment;
+    }
+
     function isNotInSwap() external view returns (bool) {
         return !inSwap;
     }
@@ -1293,16 +1300,11 @@ contract SECO is ERC20Detailed, PauseOwners {
     }
 
     function setBuyFees(
-        uint256 _burnFee,
         uint256 _liquidityFee,
         uint256 _dividendFee,
         uint256 _treasuryFee
     ) external onlyOwners {
-        require(
-            _burnFee + _liquidityFee + _dividendFee + _treasuryFee <=
-                maxTotalFee
-        );
-        buyBurnFee = _burnFee;
+        require(_liquidityFee + _dividendFee + _treasuryFee <= maxTotalFee);
         buyLiquidityFee = _liquidityFee;
         buyDividendFee = _dividendFee;
         buyTreasuryFee = _treasuryFee;
