@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 
 /*
-███████ ███████  ██████  ██████      ███████ ██ ███    ██  █████  ███    ██  ██████ ███████
-██      ██      ██      ██    ██     ██      ██ ████   ██ ██   ██ ████   ██ ██      ██
-███████ █████   ██      ██    ██     █████   ██ ██ ██  ██ ███████ ██ ██  ██ ██      █████
-     ██ ██      ██      ██    ██     ██      ██ ██  ██ ██ ██   ██ ██  ██ ██ ██      ██
-███████ ███████  ██████  ██████      ██      ██ ██   ████ ██   ██ ██   ████  ██████ ███████
+██████   ██████  ███    ██ ███████ ██     ██████  ██████   ██████  ████████  ██████   ██████  ██████  ██
+██   ██ ██    ██ ████   ██    ███  ██     ██   ██ ██   ██ ██    ██    ██    ██    ██ ██      ██    ██ ██
+██████  ██    ██ ██ ██  ██   ███   ██     ██████  ██████  ██    ██    ██    ██    ██ ██      ██    ██ ██
+██      ██    ██ ██  ██ ██  ███    ██     ██      ██   ██ ██    ██    ██    ██    ██ ██      ██    ██ ██
+██       ██████  ██   ████ ███████ ██     ██      ██   ██  ██████     ██     ██████   ██████  ██████  ███████
 */
 
 pragma solidity ^0.8.13;
@@ -748,7 +748,7 @@ abstract contract ERC20Detailed is IERC20 {
     }
 }
 
-contract SECO is ERC20Detailed, PauseOwners {
+contract PonziProtocol is ERC20Detailed, PauseOwners {
     event LogRebase(uint256 indexed rebaseEpoch, uint256 totalSupply);
     event LogAddLiquidity(
         uint256 indexed timestamp,
@@ -769,16 +769,16 @@ contract SECO is ERC20Detailed, PauseOwners {
 
     uint256 public constant maxTotalFee = 200;
 
-    uint256 public buyLiquidityFee = 25;
-    uint256 public buyTreasuryFee = 25;
-    uint256 public buyDividendFee = 50;
+    uint256 public buyLiquidityFee = 30;
+    uint256 public buyTreasuryFee = 50;
+    uint256 public buyDividendFee = 20;
     uint256 public buyTotalFee =
         buyLiquidityFee + buyTreasuryFee + buyDividendFee;
 
-    uint256 public sellBurnFee = 50;
-    uint256 public sellLiquidityFee = 25;
-    uint256 public sellTreasuryFee = 75;
-    uint256 public sellDividendFee = 50;
+    uint256 public sellBurnFee = 80;
+    uint256 public sellLiquidityFee = 40;
+    uint256 public sellTreasuryFee = 50;
+    uint256 public sellDividendFee = 30;
     uint256 public sellTotalFee =
         sellBurnFee + sellLiquidityFee + sellTreasuryFee + sellDividendFee;
 
@@ -787,9 +787,9 @@ contract SECO is ERC20Detailed, PauseOwners {
     mapping(address => bool) public _isFeeExempt;
 
     address public autoLiquidityReceiver =
-        0x4D5c4e6C38f0C0F914858a9e9a0d0969F2e4C2eA;
+        0xc14E86AcF22eFA1b339dcdb076846e6c5C77aC3a;
     address public treasuryReceiver =
-        0xda691cf8c387B3525105fAbd61f61FaFD83bC6A4;
+        0xDBE37121cAB0195259B5b0487E86EA1f5296f0F3;
 
     mapping(address => bool) public isDividendExempt;
     DividendDistributor public distributor;
@@ -798,8 +798,8 @@ contract SECO is ERC20Detailed, PauseOwners {
     IPancakeSwapRouter public router;
     address public pair;
 
-    uint256 public rebaseInterval = 10 minutes;
-    uint256 public rebaseRate = 2600; // %
+    uint256 public rebaseInterval = 5 minutes;
+    uint256 public rebaseRate = 2606; // 0.026065%
     uint256 public rebaseEpoch;
 
     bool public rebaseRateHalvingEnabled = true;
@@ -842,10 +842,10 @@ contract SECO is ERC20Detailed, PauseOwners {
     mapping(address => uint256) private _gonBalances;
     mapping(address => mapping(address => uint256)) private _allowedFragments;
 
-    constructor() ERC20Detailed("SECO", "SECO", uint8(5)) {
+    constructor() ERC20Detailed("Ponzi Protocol", "PP Coin", uint8(5)) {
         isPaused = true;
 
-        // Testnet https://amm.kiemtienonline360.com/
+        // Testnet
         address routerAddress = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
         // Mainnet
         // address routerAddress = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
