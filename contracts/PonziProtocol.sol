@@ -842,7 +842,7 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
     mapping(address => uint256) private _gonBalances;
     mapping(address => mapping(address => uint256)) private _allowedFragments;
 
-    constructor() ERC20Detailed("Ponzi Protocol", "PP Coin", uint8(5)) {
+    constructor() ERC20Detailed("Ponzi Protocol", "PPCoin", uint8(5)) {
         isPaused = true;
 
         // Testnet
