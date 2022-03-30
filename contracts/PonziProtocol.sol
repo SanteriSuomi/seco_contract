@@ -513,9 +513,9 @@ contract DividendDistributor {
     }
 
     // Testnet BUSD
-    IERC20 rewardToken = IERC20(0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7);
+    // IERC20 rewardToken = IERC20(0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7);
     // Mainnet BUSD
-    // IERC20 rewardToken = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
+    IERC20 rewardToken = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
     IPancakeSwapRouter router;
 
     address[] shareholders;
@@ -846,9 +846,9 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
         isPaused = true;
 
         // Testnet
-        address routerAddress = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
+        // address routerAddress = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
         // Mainnet
-        // address routerAddress = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
+        address routerAddress = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
 
         router = IPancakeSwapRouter(routerAddress);
         pair = IPancakeSwapFactory(router.factory()).createPair(
