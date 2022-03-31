@@ -769,16 +769,16 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
 
     uint256 public constant maxTotalFee = 200;
 
-    uint256 public buyLiquidityFee = 30;
+    uint256 public buyLiquidityFee = 25;
     uint256 public buyTreasuryFee = 50;
-    uint256 public buyDividendFee = 20;
+    uint256 public buyDividendFee = 25;
     uint256 public buyTotalFee =
         buyLiquidityFee + buyTreasuryFee + buyDividendFee;
 
-    uint256 public sellBurnFee = 80;
-    uint256 public sellLiquidityFee = 40;
+    uint256 public sellBurnFee = 50;
+    uint256 public sellLiquidityFee = 25;
     uint256 public sellTreasuryFee = 50;
-    uint256 public sellDividendFee = 30;
+    uint256 public sellDividendFee = 25;
     uint256 public sellTotalFee =
         sellBurnFee + sellLiquidityFee + sellTreasuryFee + sellDividendFee;
 
@@ -807,7 +807,7 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
     uint256 public lastRebaseRateHalving;
     uint256 public rebaseRateDivisor = 2;
 
-    uint256 public liquidityAddInterval = 5 minutes;
+    uint256 public liquidityAddInterval = 2 minutes + 30 seconds;
 
     mapping(address => bool) public botBlacklist;
     bool public antibotActivated;
@@ -921,7 +921,7 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
         ) {
             lastRebaseRateHalving = block.timestamp;
             rebaseRate /= rebaseRateDivisor;
-            if (rebaseRate <= 4) {
+            if (rebaseRate <= 10) {
                 rebaseRateHalvingEnabled = false;
             }
         }
