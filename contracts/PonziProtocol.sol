@@ -8,7 +8,7 @@
 ██       ██████  ██   ████ ███████ ██     ██      ██   ██  ██████     ██     ██████   ██████  ██████  ███████
 */
 
-pragma solidity ^0.8.13;
+pragma solidity 0.8.13;
 
 contract Owners {
     event OwnerAdded(
@@ -504,7 +504,7 @@ interface IPancakeSwapFactory {
 }
 
 contract DividendDistributor {
-    address _token;
+    address private _token;
 
     struct Share {
         uint256 amount;
@@ -512,15 +512,13 @@ contract DividendDistributor {
         uint256 totalRealised;
     }
 
-    // Testnet BUSD
-    // IERC20 rewardToken = IERC20(0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7);
-    // Mainnet BUSD
-    IERC20 rewardToken = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
-    IPancakeSwapRouter router;
+    IERC20 private rewardToken =
+        IERC20(0x5C7F8A570d578ED84E63fdFA7b1eE72dEae1AE23);
+    IPancakeSwapRouter private router;
 
-    address[] shareholders;
-    mapping(address => uint256) shareholderIndexes;
-    mapping(address => uint256) shareholderClaims;
+    address[] private shareholders;
+    mapping(address => uint256) private shareholderIndexes;
+    mapping(address => uint256) private shareholderClaims;
 
     mapping(address => Share) public shares;
 
@@ -534,7 +532,7 @@ contract DividendDistributor {
     uint256 public minPeriod = 1 hours;
     uint256 public minDistribution = 10 * (10**18);
 
-    bool initialized;
+    bool private initialized;
     modifier initialization() {
         require(!initialized);
         _;
@@ -799,7 +797,7 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
     address public pair;
 
     uint256 public rebaseInterval = 5 minutes;
-    uint256 public rebaseRate = 2606; // 0.026065%
+    uint256 public rebaseRate = 887;
     uint256 public rebaseEpoch;
 
     bool public rebaseRateHalvingEnabled = true;
@@ -819,7 +817,7 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
     bool public tradingEnabled;
     bool public swapEnabled = true;
 
-    bool inSwap;
+    bool private inSwap;
     modifier swapping() {
         inSwap = true;
         _;
@@ -845,10 +843,7 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
     constructor() ERC20Detailed("Ponzi Protocol", "PPCoin", uint8(5)) {
         isPaused = true;
 
-        // Testnet
-        // address routerAddress = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
-        // Mainnet
-        address routerAddress = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
+        address routerAddress = 0x145677FC4d9b8F19B5D56d1820c48e0443049a30;
 
         router = IPancakeSwapRouter(routerAddress);
         pair = IPancakeSwapFactory(router.factory()).createPair(
@@ -1111,10 +1106,11 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
             uint256 treasuryFee = (buyTreasuryFee + sellTreasuryFee) / 2;
             uint256 dividendFee = (buyDividendFee + sellDividendFee) / 2;
             uint256 amountFee = treasuryFee + dividendFee;
-            payable(treasuryReceiver).call{
+            (bool success, ) = payable(treasuryReceiver).call{
                 value: (amountETH * treasuryFee) / amountFee,
                 gas: 30000
             }("");
+            require(success, "Paying treasury failed");
             try
                 distributor.deposit{
                     value: (amountETH * dividendFee) / amountFee
@@ -1127,7 +1123,11 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
         uint256 amountToSwap = _gonBalances[address(this)] / _gonsPerFragment;
         uint256 amountETH = swapToETH(amountToSwap);
         if (amountETH > 0) {
-            payable(treasuryReceiver).call{value: amountETH, gas: 30000}("");
+            (bool success, ) = payable(treasuryReceiver).call{
+                value: amountETH,
+                gas: 30000
+            }("");
+            require(success, "Paying treasury failed");
         }
     }
 
@@ -1177,22 +1177,29 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
         return !inSwap && msg.sender != pair;
     }
 
-    function setRebaseSettings(
-        bool enabled,
-        uint256 interval,
-        uint256 rate
-    ) external onlyOwners {
-        _autoRebase = enabled;
+    function setRebaseSettings(uint256 interval, uint256 rate)
+        external
+        onlyOwners
+    {
+        require(
+            rebaseInterval >= 5 minutes && rebaseInterval <= 30 minutes,
+            "Rebase interval can't be too high or too low"
+        );
+        require(
+            rebaseRate >= 500 && rebaseInterval <= 3000,
+            "Rebase rate can't be too high or too low"
+        );
         rebaseInterval = interval;
         rebaseRate = rate;
         _lastRebasedTime = block.timestamp;
     }
 
-    function setRebaseHalvingSettings(bool enabled, uint256 interval)
-        external
-        onlyOwners
-    {
-        rebaseRateHalvingEnabled = enabled;
+    function setRebaseHalvingInterval(uint256 interval) external onlyOwners {
+        require(
+            rebaseRateHalvingInterval >= 40 days &&
+                rebaseRateHalvingInterval <= 400 days,
+            "Rebase rate halving interval can't be too high or too low"
+        );
         rebaseRateHalvingInterval = interval;
         _lastRebasedTime = block.timestamp;
     }
@@ -1201,6 +1208,11 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
         external
         onlyOwners
     {
+        require(
+            liquidityAddInterval >= 1 minutes &&
+                liquidityAddInterval <= 10 minutes,
+            "Liquidiy add interval can't be too high or too low"
+        );
         _autoAddLiquidity = enabled;
         liquidityAddInterval = interval;
         _lastAddLiquidityTime = block.timestamp;
@@ -1335,10 +1347,7 @@ contract PonziProtocol is ERC20Detailed, PauseOwners {
         if (isContract(_address) && _address != pair) {
             botBlacklist[_address] = _flag;
         } else {
-            require(
-                !_flag,
-                "Can only disable blacklist for user owner addresses"
-            );
+            require(!_flag, "Can't blacklist externally owned addresses");
             botBlacklist[_address] = _flag;
         }
     }

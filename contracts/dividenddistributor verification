@@ -244,7 +244,7 @@ interface IPancakeSwapRouter {
 }
 
 contract DividendDistributor {
-    address _token;
+    address private _token;
 
     struct Share {
         uint256 amount;
@@ -252,15 +252,13 @@ contract DividendDistributor {
         uint256 totalRealised;
     }
 
-    // Testnet BUSD
-    IERC20 rewardToken = IERC20(0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7);
-    // Mainnet BUSD
-    // IERC20 rewardToken = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
-    IPancakeSwapRouter router;
+    IERC20 private rewardToken =
+        IERC20(0x5C7F8A570d578ED84E63fdFA7b1eE72dEae1AE23);
+    IPancakeSwapRouter private router;
 
-    address[] shareholders;
-    mapping(address => uint256) shareholderIndexes;
-    mapping(address => uint256) shareholderClaims;
+    address[] private shareholders;
+    mapping(address => uint256) private shareholderIndexes;
+    mapping(address => uint256) private shareholderClaims;
 
     mapping(address => Share) public shares;
 
@@ -274,7 +272,7 @@ contract DividendDistributor {
     uint256 public minPeriod = 1 hours;
     uint256 public minDistribution = 10 * (10**18);
 
-    bool initialized;
+    bool private initialized;
     modifier initialization() {
         require(!initialized);
         _;
